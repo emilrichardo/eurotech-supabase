@@ -1,0 +1,14 @@
+.DS_Store
+node_modules
+dist
+build
+coverage
+.env
+*.log
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+
+.agents

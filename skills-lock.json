@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "skills": {
+    "Supabase Developer": {
+      "source": "daffy0208/ai-dev-standards",
+      "sourceType": "github",
+      "computedHash": "1ba8faa4b66a09b871c0efa184ec4f7a81c7f0373e423fc4a2655946341eb1ff"
+    },
+    "supabase-audit-functions": {
+      "source": "yoanbernabeu/supabase-pentest-skills",
+      "sourceType": "github",
+      "computedHash": "0381b22df35f0c13a7757357099dd277ea6782a9e5a25e5509b655e65ac4392a"
+    },
+    "supabase-backend-platform": {
+      "source": "bobmatnyc/claude-mpm-skills",
+      "sourceType": "github",
+      "computedHash": "926848cda1377fa0a467121fcfcb8985415daa0ab250499919fb485b052c8a7a"
+    },
+    "supabase-edge-functions": {
+      "source": "nice-wolf-studio/claude-code-supabase-skills",
+      "sourceType": "github",
+      "computedHash": "21c7485f1998f1dded5c584f009565ff9e8f74141e72e5358faebce4d68656be"
+    },
+    "supabase-postgres-best-practices": {
+      "source": "supabase/agent-skills",
+      "sourceType": "github",
+      "computedHash": "9c87c315aed143ee3b34bec8117100f5035e0df09e6b23e1ecc772cff434c9ad"
+    },
+    "supabase-storage": {
+      "source": "nice-wolf-studio/claude-code-supabase-skills",
+      "sourceType": "github",
+      "computedHash": "492e705246ae7f3ad0dfa99edddf0f862778e1324072d39ec457f57abb11b8df"
+    }
+  }
+}
