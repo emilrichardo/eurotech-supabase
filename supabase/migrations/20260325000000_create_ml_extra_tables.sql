@@ -136,3 +136,19 @@ select cron.schedule(
   );
   $$
 );
+
+-- Visitas por item: 1 vez por día (dispara la cadena automática)
+select cron.schedule(
+  'ml-sync-item-visits-daily',
+  '30 6 * * *',
+  $$
+  select net.http_post(
+    url     := 'https://ncgvyabucowccaddyjna.functions.supabase.co/ml-sync-item-visits',
+    headers := jsonb_build_object(
+      'Content-Type',  'application/json',
+      'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'supabase_service_key' limit 1)
+    ),
+    body    := '{"page":0}'::jsonb
+  );
+  $$
+);

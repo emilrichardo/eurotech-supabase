@@ -98,14 +98,23 @@ Deno.serve(async (req) => {
     console.log("=== ML Sync Questions iniciado ===");
     const { token } = await getToken();
 
-    // Obtener todos los item_ids con preguntas (filtramos items que tienen questions > 0)
-    // Primero traemos todos los item_ids de ml_products
-    const { data: products, error: prodError } = await supabase
-      .from("ml_products")
-      .select("id");
+    // Traer TODOS los item_ids paginando de a 1000 (límite Supabase)
+    const products: { id: string }[] = [];
+    let from = 0;
+    const PAGE = 1000;
+    while (true) {
+      const { data, error: prodError } = await supabase
+        .from("ml_products")
+        .select("id")
+        .range(from, from + PAGE - 1);
+      if (prodError) throw new Error(`Error fetching products: ${prodError.message}`);
+      if (!data || data.length === 0) break;
+      products.push(...data);
+      if (data.length < PAGE) break;
+      from += PAGE;
+    }
 
-    if (prodError) throw new Error(`Error fetching products: ${prodError.message}`);
-    if (!products || products.length === 0) {
+    if (products.length === 0) {
       return Response.json({ success: true, upserted: 0, message: "No products found" });
     }
 
