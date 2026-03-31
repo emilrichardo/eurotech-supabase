@@ -187,7 +187,7 @@ interface MLItem {
   accepts_mercadopago?: boolean;
   non_mercado_pago_payment_methods?: unknown;
   shipping?: unknown;
-  attributes?: unknown;
+  attributes?: { id: string; value_name: string | null }[];
   variations?: unknown;
   sale_terms?: unknown;
   descriptions?: unknown;
@@ -211,9 +211,16 @@ interface MLItem {
   channels?: unknown;
 }
 
+function extractSku(attributes: MLItem["attributes"]): string | null {
+  if (!Array.isArray(attributes)) return null;
+  const attr = attributes.find((a) => a.id === "SELLER_SKU");
+  return attr?.value_name ?? null;
+}
+
 function mapItemToRow(item: MLItem) {
   return {
     id: item.id,
+    sku: extractSku(item.attributes),
     site_id: item.site_id ?? null,
     catalog_product_id: item.catalog_product_id ?? null,
     parent_item_id: item.parent_item_id ?? null,
