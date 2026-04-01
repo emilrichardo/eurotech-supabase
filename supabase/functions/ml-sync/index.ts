@@ -41,10 +41,16 @@ async function getValidToken(): Promise<TokenRow> {
     return data;
   }
 
-  // Token próximo a vencer — refrescar
-  console.log("Token próximo a expirar, renovando...");
-  const newAccessToken = await refreshToken(data);
-  return { ...data, access_token: newAccessToken };
+  // Token próximo a vencer — intentar refrescar, si falla usar el actual
+  console.log("Token próximo a expirar, intentando renovar...");
+  try {
+    const newAccessToken = await refreshToken(data);
+    return { ...data, access_token: newAccessToken };
+  } catch (err) {
+    console.warn("No se pudo renovar el token automáticamente:", err instanceof Error ? err.message : err);
+    console.warn("Usando token actual. Actualizar via ml-update-token.");
+    return data;
+  }
 }
 
 async function refreshToken(tokenRow: TokenRow): Promise<string> {
