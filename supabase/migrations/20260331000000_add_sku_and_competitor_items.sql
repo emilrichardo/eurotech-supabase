@@ -33,8 +33,10 @@ create index if not exists idx_ml_competitor_items_status on public.ml_competito
 -- ─── RLS ───────────────────────────────────────────────────────────────────
 alter table public.ml_competitor_items enable row level security;
 
-create policy "service_role only" on public.ml_competitor_items
-  for all using (auth.role() = 'service_role');
+do $$ begin
+  create policy "service_role only" on public.ml_competitor_items
+    for all using (auth.role() = 'service_role');
+exception when duplicate_object then null; end $$;
 
 -- ─── Cron: actualizar precios competencia cada hora ────────────────────────
 select cron.schedule(
