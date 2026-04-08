@@ -6,21 +6,45 @@ export const dynamic = 'force-dynamic'
 export default async function ProductosPage() {
   const supabase = createAdminClient()
 
-  const { data: products, error, count } = await supabase
-    .from('ml_products')
-    .select(
-      `id, title, subtitle, sku, price, base_price, original_price, currency_id,
-       available_quantity, sold_quantity, initial_quantity,
-       status, condition, listing_type_id, buying_mode,
-       thumbnail, permalink, category_id, domain_id,
-       catalog_product_id, seller_custom_field,
-       warranty, health, automatic_relist, catalog_listing,
-       date_created, last_updated, synced_at, start_time, stop_time,
-       shipping, tags, attributes, pictures`,
-      { count: 'exact' }
-    )
-    .order('last_updated', { ascending: false })
-    .limit(500)
+  const [productsResult, competitorsResult, categoriesResult] = await Promise.all([
+    supabase
+      .from('ml_products')
+      .select(
+        `id, title, subtitle, sku, price, catalog_price, base_price, original_price, currency_id,
+         available_quantity, sold_quantity, initial_quantity,
+         status, condition, listing_type_id, buying_mode,
+         thumbnail, permalink, category_id, domain_id,
+         catalog_product_id, seller_custom_field,
+         warranty, health, automatic_relist, catalog_listing,
+         date_created, last_updated, synced_at, start_time, stop_time,
+         shipping, tags, attributes, pictures`,
+        { count: 'exact' }
+      )
+      .order('last_updated', { ascending: false })
+      .limit(500),
+
+    supabase
+      .from('ml_competitor_items')
+      .select('id, our_sku, title, price, currency_id, status, thumbnail, permalink, seller_id, synced_at'),
+
+    supabase
+      .from('ml_categories')
+      .select('id, name, full_path'),
+  ])
+
+  const { data: products, error, count } = productsResult
+  const competitors = competitorsResult.data ?? []
+  const categoryMap: Record<string, string> = {}
+  for (const c of categoriesResult.data ?? []) {
+    categoryMap[c.id] = c.full_path ?? c.name
+  }
+
+  // Group competitors by our_sku
+  const competitorsBySku: Record<string, typeof competitors> = {}
+  for (const c of competitors) {
+    if (!competitorsBySku[c.our_sku]) competitorsBySku[c.our_sku] = []
+    competitorsBySku[c.our_sku].push(c)
+  }
 
   if (error) {
     return (
@@ -48,7 +72,12 @@ export default async function ProductosPage() {
         </div>
       ) : (
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        <ProductsTable products={products as any} count={count ?? 0} />
+        <ProductsTable
+          products={products as any}
+          count={count ?? 0}
+          competitorsBySku={competitorsBySku as any}
+          categoryMap={categoryMap}
+        />
       )}
     </div>
   )
