@@ -3,13 +3,19 @@ import { createAdminClient } from '@/lib/supabase/admin'
 
 const ML_API = 'https://api.mercadolibre.com'
 
-// Catalog product IDs have more digits than item IDs, but both can vary.
-// We detect catalog IDs by the permalink containing /p/ or by trying both endpoints.
 function isCatalogId(id: string, permalink: string | null): boolean {
-  if (permalink?.includes('/p/')) return true
-  // Catalog IDs typically have 10+ digits; item IDs 9 digits — not 100% reliable
-  const digits = id.replace(/^ML[A-Z]/i, '')
+  if (permalink?.includes('/p/') || permalink?.includes('/up/')) return true
+  const digits = id.replace(/^ML[A-Z]+/i, '')
   return digits.length >= 10
+}
+
+async function fetchNickname(sellerId: number, headers: Record<string, string>): Promise<string | null> {
+  try {
+    const res = await fetch(`${ML_API}/users/${sellerId}`, { headers })
+    if (!res.ok) return null
+    const data = await res.json()
+    return (data.nickname as string) ?? null
+  } catch { return null }
 }
 
 export async function POST() {
@@ -31,7 +37,7 @@ export async function POST() {
 
   const { data: items, error } = await admin
     .from('ml_competitor_items')
-    .select('id, our_sku, permalink')
+    .select('id, our_sku, permalink, seller_id, seller_name')
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   if (!items || items.length === 0) {
@@ -41,19 +47,23 @@ export async function POST() {
   let updated = 0
   let failed = 0
 
+  // Phase 1: update prices/thumbnails in parallel batches
+  type PendingSellerName = { id: string; our_sku: string; seller_id: number }
+  const pendingSellerNames: PendingSellerName[] = []
+
   const BATCH = 10
   for (let i = 0; i < items.length; i += BATCH) {
     const chunk = items.slice(i, i + BATCH)
     await Promise.all(chunk.map(async (item) => {
       try {
         let updateData: Record<string, unknown> | null = null
+        let newSellerId: number | null = null
 
         if (isCatalogId(item.id, item.permalink)) {
-          // Catalog-based competitor: use /products endpoint
           const productRes = await fetch(`${ML_API}/products/${item.id}`, { headers })
           const productData = productRes.ok ? await productRes.json() : {}
 
-          const itemsRes = await fetch(`${ML_API}/products/${item.id}/items?status=active&limit=20`, { headers })
+          const itemsRes = await fetch(`${ML_API}/products/${item.id}/items?limit=20`, { headers })
           if (!itemsRes.ok) { failed++; return }
 
           const itemsData = await itemsRes.json()
@@ -70,6 +80,8 @@ export async function POST() {
             : results[0]
 
           const pictures: Array<{ url?: string }> = productData.pictures ?? []
+          newSellerId = best.seller_id
+
           updateData = {
             title: productData.name ?? null,
             price: best.price,
@@ -81,12 +93,13 @@ export async function POST() {
             synced_at: new Date().toISOString(),
           }
         } else {
-          // Direct item: use /items endpoint (works for our own items)
           const res = await fetch(`${ML_API}/items/${item.id}`, { headers })
           if (!res.ok) { failed++; return }
 
           const data = await res.json()
           if (!data.title) { failed++; return }
+
+          newSellerId = data.seller_id ?? null
 
           updateData = {
             title: data.title ?? null,
@@ -114,11 +127,28 @@ export async function POST() {
 
         if (updateError) { failed++; return }
         updated++
+
+        // Queue seller name fetch if missing or seller changed
+        if (newSellerId && (!item.seller_name || newSellerId !== Number(item.seller_id))) {
+          pendingSellerNames.push({ id: item.id, our_sku: item.our_sku, seller_id: newSellerId })
+        }
       } catch {
         failed++
       }
     }))
   }
 
-  return NextResponse.json({ ok: true, updated, failed, total: items.length })
+  // Phase 2: fetch seller names sequentially to avoid rate limits
+  for (const pending of pendingSellerNames) {
+    const nickname = await fetchNickname(pending.seller_id, headers)
+    if (nickname) {
+      await admin
+        .from('ml_competitor_items')
+        .update({ seller_name: nickname })
+        .eq('id', pending.id)
+        .eq('our_sku', pending.our_sku)
+    }
+  }
+
+  return NextResponse.json({ ok: true, updated, failed, total: items.length, seller_names_fetched: pendingSellerNames.length })
 }

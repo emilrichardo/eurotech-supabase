@@ -144,6 +144,7 @@ type Competitor = {
   thumbnail: string | null
   permalink: string | null
   seller_id: number | null
+  seller_name: string | null
   synced_at: string | null
   paused: boolean
 }
@@ -912,7 +913,11 @@ export default function ProductsTable({
                                     {entry.label}
                                   </p>
                                   <p className="text-xs text-gray-400">
-                                    {entry.isOurs ? (entry.oursType === 'cat' ? 'Nuestro — catálogo' : 'Nuestro — publicación') : isPaused ? 'Pausado' : 'Competidor'}
+                                    {entry.isOurs
+                                      ? (entry.oursType === 'cat' ? 'Nuestro — catálogo' : 'Nuestro — publicación')
+                                      : isPaused
+                                        ? 'Pausado'
+                                        : (entry.comp?.seller_name ?? 'Competidor')}
                                   </p>
                                 </div>
                                 <div className="text-right shrink-0">

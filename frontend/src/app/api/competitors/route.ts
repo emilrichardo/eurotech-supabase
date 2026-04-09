@@ -44,6 +44,17 @@ function parseInput(input: string): { catalogId: string | null; itemId: string |
   return { catalogId, itemId }
 }
 
+async function fetchSellerName(sellerId: number, accessToken: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${ML_API}/users/${sellerId}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    return (data.nickname as string) ?? null
+  } catch { return null }
+}
+
 async function fetchFromCatalog(
   catalogId: string,
   accessToken: string,
@@ -65,7 +76,7 @@ async function fetchFromCatalog(
   } catch { /* skip */ }
 
   // Get all active listings for this catalog product
-  const itemsRes = await fetch(`${ML_API}/products/${catalogId}/items?status=active&limit=20`, { headers })
+  const itemsRes = await fetch(`${ML_API}/products/${catalogId}/items?limit=20`, { headers })
   if (!itemsRes.ok) return null
 
   const itemsData = await itemsRes.json()
@@ -92,6 +103,8 @@ async function fetchFromCatalog(
   const pictures: Array<{ url?: string }> = (productData.pictures as Array<{ url?: string }>) ?? []
   const thumbnail = pictures[0]?.url ?? null
 
+  const seller_name = await fetchSellerName(best.seller_id, accessToken)
+
   return {
     id: catalogId,
     title: (productData.name as string) ?? null,
@@ -105,6 +118,7 @@ async function fetchFromCatalog(
     permalink: permalinkBase,
     thumbnail,
     seller_id: best.seller_id,
+    seller_name,
   }
 }
 
@@ -200,6 +214,7 @@ export async function POST(req: NextRequest) {
     permalink: (mlData.permalink as string) ?? `https://www.mercadolibre.com.uy/p/${resolvedId}`,
     thumbnail: (mlData.thumbnail as string) ?? null,
     seller_id: (mlData.seller_id as number) ?? null,
+    seller_name: (mlData.seller_name as string) ?? null,
     health: (mlData.health as number) ?? null,
     synced_at: new Date().toISOString(),
   }

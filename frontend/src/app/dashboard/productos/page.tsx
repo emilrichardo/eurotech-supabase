@@ -26,7 +26,7 @@ export default async function ProductosPage() {
 
     supabase
       .from('ml_competitor_items')
-      .select('id, our_sku, title, price, currency_id, status, thumbnail, permalink, seller_id, synced_at, paused'),
+      .select('id, our_sku, title, price, currency_id, status, thumbnail, permalink, seller_id, seller_name, synced_at, paused'),
 
     supabase
       .from('ml_categories')
