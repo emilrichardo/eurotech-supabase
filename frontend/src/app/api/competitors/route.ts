@@ -16,28 +16,28 @@ function parseInput(input: string): { catalogId: string | null; itemId: string |
   try {
     const url = new URL(trimmed)
 
-    // Catalog product URL: /p/MLU... in pathname
-    const catalogMatch = url.pathname.match(/\/p\/(ML[A-Z]\d+)/i)
+    // Catalog/collection pages: /p/MLU... or /up/MLUU... in pathname
+    const catalogMatch = url.pathname.match(/\/(?:p|up)\/(ML[A-Z]+\d+)/i)
     if (catalogMatch) {
       catalogId = catalogMatch[1].toUpperCase()
     }
 
     // wid= param in fragment (winning item ID from search results)
-    const widMatch = url.hash.match(/[?&]wid=(ML[A-Z]\d+)/i)
-    if (widMatch) itemId = widMatch[1].toUpperCase()
+    const widMatch = url.hash.match(/[?&]wid=(ML[A-Z]+\d+)/i)
+    if (widMatch && !catalogId) itemId = widMatch[1].toUpperCase()
 
     // Article URL: /MLU-123456789- in pathname
-    const articleMatch = url.pathname.match(/\/(ML[A-Z])-?(\d+)/i)
-    if (!catalogId && articleMatch) {
+    const articleMatch = url.pathname.match(/\/(ML[A-Z]+)-?(\d+)/i)
+    if (!catalogId && !itemId && articleMatch) {
       itemId = (articleMatch[1] + articleMatch[2]).toUpperCase()
     }
   } catch {
     // Not a URL — look for IDs in the raw string
   }
 
-  // Fallback: first ML ID in string
+  // Fallback: first ML ID in string (ML + one or more letters + digits)
   if (!catalogId && !itemId) {
-    const match = trimmed.match(/ML[A-Z]\d+/i)
+    const match = trimmed.match(/ML[A-Z]+\d+/i)
     if (match) itemId = match[0].toUpperCase()
   }
 
@@ -51,9 +51,18 @@ async function fetchFromCatalog(
 ): Promise<Record<string, unknown> | null> {
   const headers = { Authorization: `Bearer ${accessToken}` }
 
-  // Get product metadata (name, pictures)
-  const productRes = await fetch(`${ML_API}/products/${catalogId}`, { headers })
-  const productData = productRes.ok ? await productRes.json() : {}
+  // Determine URL format: MLUU = universal product page (/up/), others = catalog (/p/)
+  const isUniversal = catalogId.match(/^ML[A-Z]{2,}/i)
+  const permalinkBase = isUniversal
+    ? `https://www.mercadolibre.com.uy/up/${catalogId}`
+    : `https://www.mercadolibre.com.uy/p/${catalogId}`
+
+  // Try to get product metadata (name, pictures) — may return 403 for some ID formats
+  let productData: Record<string, unknown> = {}
+  try {
+    const productRes = await fetch(`${ML_API}/products/${catalogId}`, { headers })
+    if (productRes.ok) productData = await productRes.json()
+  } catch { /* skip */ }
 
   // Get all active listings for this catalog product
   const itemsRes = await fetch(`${ML_API}/products/${catalogId}/items?status=active&limit=20`, { headers })
@@ -67,7 +76,6 @@ async function fetchFromCatalog(
     currency_id: string
     condition: string
     listing_type_id: string
-    shipping: Record<string, unknown>
   }> = itemsData.results ?? []
 
   if (results.length === 0) return null
@@ -79,22 +87,22 @@ async function fetchFromCatalog(
 
   const best = competitors.length > 0
     ? competitors.reduce((a, b) => a.price <= b.price ? a : b)
-    : results[0] // fallback: include our own
+    : results[0]
 
-  const pictures: Array<{ url?: string }> = productData.pictures ?? []
+  const pictures: Array<{ url?: string }> = (productData.pictures as Array<{ url?: string }>) ?? []
   const thumbnail = pictures[0]?.url ?? null
 
   return {
-    id: catalogId, // use catalog ID as our stable reference
-    title: productData.name ?? null,
+    id: catalogId,
+    title: (productData.name as string) ?? null,
     price: best.price,
     original_price: null,
     currency_id: best.currency_id ?? 'UYU',
     status: 'active',
     condition: best.condition ?? null,
     listing_type_id: best.listing_type_id ?? null,
-    category_id: productData.domain_id ?? null,
-    permalink: `https://www.mercadolibre.com.uy/p/${catalogId}`,
+    category_id: (productData.domain_id as string) ?? null,
+    permalink: permalinkBase,
     thumbnail,
     seller_id: best.seller_id,
   }

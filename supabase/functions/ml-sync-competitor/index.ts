@@ -97,6 +97,41 @@ interface CompetitorItem {
   our_sku: string;
   price: number | null;
   previous_price: number | null;
+  permalink: string | null;
+}
+
+// Catalog product IDs are stored with /p/ or /up/ permalinks
+function isCatalogItem(item: CompetitorItem): boolean {
+  return !!(item.permalink?.includes("/p/") || item.permalink?.includes("/up/"));
+}
+
+interface CatalogItemResult {
+  seller_id: number;
+  price: number;
+  currency_id: string;
+  condition: string;
+}
+
+async function fetchCatalogPrice(
+  catalogId: string,
+  token: string,
+  ourUserId: number
+): Promise<{ price: number | null; sellerId: number | null }> {
+  const res = await fetch(
+    `${ML_API}/products/${catalogId}/items?status=active&limit=20`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) return { price: null, sellerId: null };
+
+  const data = await res.json();
+  const results: CatalogItemResult[] = data.results ?? [];
+  if (results.length === 0) return { price: null, sellerId: null };
+
+  // Pick cheapest competitor (exclude our own seller ID)
+  const competitors = results.filter((r) => r.seller_id !== ourUserId);
+  const pool = competitors.length > 0 ? competitors : results;
+  const best = pool.reduce((a, b) => (a.price <= b.price ? a : b));
+  return { price: best.price, sellerId: best.seller_id };
 }
 
 interface MLItemPrice {
@@ -203,7 +238,7 @@ function calcDiffPct(ourPrice: number | null, competitorPrice: number | null): n
 
 // ─── Core ────────────────────────────────────────────────────────────────────
 
-async function syncCompetitorPrices(token: string): Promise<{
+async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
   items_processed: number;
   items_updated: number;
   alerts_fired: number;
@@ -211,7 +246,7 @@ async function syncCompetitorPrices(token: string): Promise<{
   // 1. Cargar todos los competitor items
   const { data: competitorItems, error: ciError } = await supabase
     .from("ml_competitor_items")
-    .select("id, our_sku, price, previous_price");
+    .select("id, our_sku, price, previous_price, permalink");
 
   if (ciError) throw new Error(`Error cargando competitor items: ${ciError.message}`);
   if (!competitorItems || competitorItems.length === 0) {
@@ -245,12 +280,96 @@ async function syncCompetitorPrices(token: string): Promise<{
     }
   }
 
+  const token = tokenRow.access_token;
+
   let itemsUpdated = 0;
   let alertsFired = 0;
   const items = competitorItems as CompetitorItem[];
 
-  // 4. Procesar en batches de 20 (límite ML API multiget)
-  for (const batch of chunk(items, 20)) {
+  const catalogItems = items.filter(isCatalogItem);
+  const directItems = items.filter((i) => !isCatalogItem(i));
+
+  console.log(`Catalog items: ${catalogItems.length}, Direct items: ${directItems.length}`);
+
+  // ── Helper: process alerts and update for a resolved price ──────────────
+  function buildUpdateAndAlerts(
+    item: CompetitorItem,
+    newPrice: number | null,
+  ): {
+    update: Record<string, unknown>;
+    alerts: {
+      rule_id: string;
+      our_sku: string;
+      competitor_item_id: string;
+      our_price: number | null;
+      competitor_price_before: number | null;
+      competitor_price_after: number | null;
+      diff_pct: number | null;
+    }[];
+  } {
+    const prevPrice = item.price ?? null;
+    const ourPrice = ownPriceMap.get(item.our_sku) ?? null;
+
+    const update: Record<string, unknown> = {
+      id: item.id,
+      our_sku: item.our_sku,
+      price: newPrice,
+      previous_price: prevPrice,
+      synced_at: new Date().toISOString(),
+    };
+
+    const applicableRules = allRules.filter(
+      (r) => r.sku === null || r.sku === item.our_sku
+    );
+    const alerts = applicableRules
+      .filter((rule) => evaluateRule(rule, prevPrice, newPrice, ourPrice))
+      .map((rule) => ({
+        rule_id: rule.id,
+        our_sku: item.our_sku,
+        competitor_item_id: item.id,
+        our_price: ourPrice,
+        competitor_price_before: prevPrice,
+        competitor_price_after: newPrice,
+        diff_pct: calcDiffPct(ourPrice, newPrice),
+      }));
+
+    return { update, alerts };
+  }
+
+  // ── 4a. Catalog items: use /products/{id}/items endpoint ─────────────────
+  for (const batch of chunk(catalogItems, 10)) {
+    const allAlerts: ReturnType<typeof buildUpdateAndAlerts>["alerts"] = [];
+    const allUpdates: Record<string, unknown>[] = [];
+
+    await Promise.all(batch.map(async (item) => {
+      try {
+        const { price: newPrice } = await fetchCatalogPrice(item.id, token, tokenRow.user_id);
+        if (newPrice === null) return;
+        const { update, alerts } = buildUpdateAndAlerts(item, newPrice);
+        allUpdates.push(update);
+        allAlerts.push(...alerts);
+      } catch (err) {
+        console.error(`Error fetching catalog ${item.id}: ${err instanceof Error ? err.message : err}`);
+      }
+    }));
+
+    if (allUpdates.length > 0) {
+      const { error: upsertError } = await supabase
+        .from("ml_competitor_items")
+        .upsert(allUpdates, { onConflict: "id,our_sku" });
+      if (upsertError) console.error(`Error actualizando catalog items: ${upsertError.message}`);
+      else itemsUpdated += allUpdates.length;
+    }
+
+    if (allAlerts.length > 0) {
+      const { error: alertError } = await supabase.from("ml_price_alerts").insert(allAlerts);
+      if (alertError) console.error(`Error insertando alertas: ${alertError.message}`);
+      else alertsFired += allAlerts.length;
+    }
+  }
+
+  // ── 4b. Direct items: batch via /items?ids= ──────────────────────────────
+  for (const batch of chunk(directItems, 20)) {
     const ids = batch.map((i) => i.id);
     let mlResults: MLItemPrice[];
 
@@ -375,7 +494,7 @@ Deno.serve(async (req) => {
     console.log("=== ML Sync Competitor iniciado ===");
 
     const tokenRow = await getValidToken();
-    const stats = await syncCompetitorPrices(tokenRow.access_token);
+    const stats = await syncCompetitorPrices(tokenRow);
 
     const result = { success: true, ...stats, synced_at: new Date().toISOString() };
     console.log("=== ML Sync Competitor finalizado ===", result);

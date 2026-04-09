@@ -321,6 +321,8 @@ export default function ProductsTable({
   const [onlyWithCompetitors, setOnlyWithCompetitors] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [syncMsg, setSyncMsg] = useState<string | null>(null)
+  const [panelTab, setPanelTab] = useState<'competitors' | 'details'>('competitors')
+  const [compView, setCompView] = useState<'position' | 'diff'>('position')
 
   function handleSelect(p: Product) {
     setSelected(selected?.id === p.id ? null : p)
@@ -633,182 +635,453 @@ export default function ProductsTable({
       )}
 
       {/* Detail panel — slides in from the right */}
-      <div
-        className={`fixed top-0 right-0 h-full w-full md:w-[600px] bg-white shadow-2xl z-40 flex flex-col transition-transform duration-300 ease-in-out ${
-          selected ? 'translate-x-0' : 'translate-x-full'
-        }`}
-      >
-        {selected && <>
-          {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
-            <div className="min-w-0">
-              <h2 className="font-semibold text-gray-900 leading-snug line-clamp-2">{selected.title}</h2>
-              <p className="text-xs text-gray-400 mt-0.5 font-mono">{selected.id}</p>
-            </div>
-            <button
-              onClick={() => setSelected(null)}
-              className="ml-4 shrink-0 text-gray-400 hover:text-gray-700 text-2xl leading-none"
-            >
-              ×
-            </button>
-          </div>
+      {(() => {
+        const skuKey = selected?.sku ?? selected?.id ?? ''
+        const comps = selected ? (localCompetitors[skuKey] ?? []) : []
+        const compCount = comps.length
+        const pubPrice = selected?.price ?? null
+        const catPrice = selected?.catalog_price ?? null
+        const refPrice = catPrice ?? pubPrice // primary reference for comparisons
 
-          {/* Hero image */}
-          {(selected.pictures?.[0]?.secure_url || selected.thumbnail) && (
-            <div className="flex justify-center items-center bg-gray-50 border-b border-gray-100 shrink-0 py-8">
-              <Image
-                src={selected.pictures?.[0]?.secure_url ?? imgUrl(selected.thumbnail, 'full')!}
-                alt={selected.title}
-                width={400}
-                height={400}
-                className="object-contain max-h-72"
-                unoptimized
-              />
-            </div>
-          )}
+        // Build unified sorted list for competitor views
+        type PriceEntry = {
+          key: string
+          label: string
+          price: number
+          isOurs: boolean
+          oursType?: 'pub' | 'cat'
+          comp?: Competitor
+        }
+        const allEntries: PriceEntry[] = []
+        if (pubPrice != null) allEntries.push({ key: 'our-pub', label: 'Mi precio publicación', price: pubPrice, isOurs: true, oursType: 'pub' })
+        if (catPrice != null && catPrice !== pubPrice) allEntries.push({ key: 'our-cat', label: 'Mi precio catálogo', price: catPrice, isOurs: true, oursType: 'cat' })
+        for (const c of comps) {
+          if (c.price != null) allEntries.push({ key: c.id, label: c.title ?? c.id, price: c.price, isOurs: false, comp: c })
+        }
+        const sortedByPrice = [...allEntries].sort((a, b) => a.price - b.price)
 
-          {/* Scrollable body */}
-          <div className="overflow-y-auto flex-1 p-6">
-            <div className="space-y-2">
+        function diffVsRef(price: number) {
+          if (refPrice == null || refPrice === 0) return null
+          return ((price - refPrice) / refPrice) * 100
+        }
+        function diffVsPub(price: number) {
+          if (pubPrice == null || pubPrice === 0) return null
+          return ((price - pubPrice) / pubPrice) * 100
+        }
 
-              {/* Competidores */}
-              {(() => {
-                const skuKey = selected.sku ?? selected.id
-                const comps = localCompetitors[skuKey] ?? []
-                return (
-                  <div className="border border-orange-200 bg-orange-50/40 rounded-xl overflow-hidden">
-                    <div className="flex items-center justify-between px-5 py-4">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-gray-700">Competidores</span>
-                        {comps.length > 0 && (
-                          <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-600 text-xs font-medium">{comps.length}</span>
-                        )}
+        return (
+          <div className={`fixed top-0 right-0 h-full w-full md:w-[600px] bg-white shadow-2xl z-40 flex flex-col transition-transform duration-300 ease-in-out ${selected ? 'translate-x-0' : 'translate-x-full'}`}>
+            {selected && <>
+              {/* Header */}
+              <div className="flex items-start justify-between px-5 py-3 border-b border-gray-100 shrink-0">
+                <h2 className="font-semibold text-gray-900 leading-snug line-clamp-2 text-sm flex-1 min-w-0 pr-3">{selected.title}</h2>
+                <button onClick={() => setSelected(null)} className="shrink-0 text-gray-400 hover:text-gray-700 text-2xl leading-none">×</button>
+              </div>
+
+              {/* Top 2-col: image + key info */}
+              <div className="flex border-b border-gray-100 shrink-0">
+                <div className="w-40 shrink-0 bg-gray-50 flex items-center justify-center p-2 border-r border-gray-100">
+                  {(selected.pictures?.[0]?.secure_url || selected.thumbnail) ? (
+                    <Image
+                      src={selected.pictures?.[0]?.secure_url ?? imgUrl(selected.thumbnail, 'full')!}
+                      alt={selected.title}
+                      width={144}
+                      height={144}
+                      className="object-contain w-full h-full"
+                      style={{ width: 'auto', height: 'auto', maxWidth: '100%', maxHeight: '144px' }}
+                      unoptimized
+                    />
+                  ) : (
+                    <div className="w-full h-36 bg-gray-100 rounded" />
+                  )}
+                </div>
+                <div className="flex-1 p-4 flex flex-col justify-between min-w-0">
+                  <div className="space-y-2">
+                    <div className="flex gap-4">
+                      <div>
+                        <p className="text-xs text-gray-400 uppercase tracking-wide font-medium">MLU</p>
+                        <p className="text-xs font-mono text-gray-900 font-semibold">{selected.id}</p>
+                      </div>
+                      {selected.sku && (
+                        <div>
+                          <p className="text-xs text-gray-400 uppercase tracking-wide font-medium">SKU</p>
+                          <p className="text-xs font-mono text-gray-900 font-semibold">{selected.sku}</p>
+                        </div>
+                      )}
+                    </div>
+                    <div className="border-t border-gray-50 pt-2 space-y-1">
+                      <div className="flex items-baseline justify-between">
+                        <span className="text-xs text-gray-400">Precio pub.</span>
+                        <span className="text-lg font-bold text-gray-900">{formatPrice(pubPrice, selected.currency_id)}</span>
+                      </div>
+                      {catPrice != null && (
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-xs text-gray-400">Precio cat.</span>
+                          <span className={`text-base font-semibold ${catPrice < (pubPrice ?? Infinity) ? 'text-blue-600' : 'text-gray-700'}`}>
+                            {formatPrice(catPrice, selected.currency_id)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between mt-2">
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLOR[selected.status ?? ''] ?? 'bg-gray-100 text-gray-600'}`}>
+                      {STATUS_LABEL[selected.status ?? ''] ?? selected.status ?? '—'}
+                    </span>
+                    {selected.permalink && (
+                      <a href={selected.permalink} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 hover:text-blue-700 font-medium">
+                        Ver en ML →
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Tabs */}
+              <div className="flex border-b border-gray-100 shrink-0">
+                <button
+                  onClick={() => setPanelTab('competitors')}
+                  className={`flex-1 py-2.5 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${panelTab === 'competitors' ? 'border-b-2 border-blue-600 text-blue-700 bg-blue-50/40' : 'text-gray-400 hover:text-gray-600'}`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+                  Precios Competidores
+                  {compCount > 0 && (
+                    <span className="bg-orange-500 text-white text-xs px-1.5 py-0.5 rounded-full font-bold min-w-[20px] text-center">{compCount}</span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setPanelTab('details')}
+                  className={`flex-1 py-2.5 text-sm font-medium transition-colors ${panelTab === 'details' ? 'border-b-2 border-blue-600 text-blue-700 bg-blue-50/40' : 'text-gray-400 hover:text-gray-600'}`}
+                >
+                  Detalles del producto
+                </button>
+              </div>
+
+              {/* Tab body */}
+              <div className="overflow-y-auto flex-1">
+
+                {/* ── Competitors tab ── */}
+                {panelTab === 'competitors' && (
+                  <div className="p-4 space-y-4">
+                    {/* Toolbar */}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex gap-1 bg-gray-100 p-0.5 rounded-lg">
+                        {([['position', 'Posición'], ['diff', 'Diferencia']] as [typeof compView, string][]).map(([mode, label]) => (
+                          <button
+                            key={mode}
+                            onClick={() => setCompView(mode)}
+                            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${compView === mode ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                          >
+                            {label}
+                          </button>
+                        ))}
                       </div>
                       <button
                         onClick={() => setShowAddModal(true)}
-                        className="flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors"
+                        className="flex items-center gap-1 text-xs font-medium bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 transition-colors"
                       >
-                        <span className="text-base leading-none">+</span> Agregar
+                        <span className="text-base leading-none">+</span> Agregar rival
                       </button>
                     </div>
-                    {comps.length > 0 && (
-                      <div className="border-t border-orange-100 divide-y divide-orange-100">
-                        {comps.map(c => (
-                          <div key={c.id} className="flex items-center gap-3 px-5 py-3">
-                            {c.thumbnail ? (
-                              <Image src={imgUrl(c.thumbnail)!} alt={c.title ?? ''} width={40} height={40} className="rounded object-contain w-10 h-10 shrink-0" unoptimized />
-                            ) : (
-                              <div className="w-10 h-10 bg-orange-100 rounded shrink-0" />
-                            )}
-                            <div className="flex-1 min-w-0">
-                              <a href={c.permalink ?? '#'} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-gray-900 hover:text-blue-600 line-clamp-1">
-                                {c.title ?? c.id}
-                              </a>
-                              <p className="text-xs text-gray-400 font-mono mt-0.5">{c.id}</p>
-                            </div>
-                            <div className="text-right shrink-0">
-                              <p className="text-sm font-semibold text-gray-900">{formatPrice(c.price, c.currency_id)}</p>
-                              {selected.price != null && c.price != null && (
-                                <p className={`text-xs font-medium mt-0.5 ${c.price < selected.price ? 'text-red-500' : 'text-green-600'}`}>
-                                  {c.price < selected.price
-                                    ? `−${((selected.price - c.price) / selected.price * 100).toFixed(0)}%`
-                                    : `+${((c.price - selected.price) / selected.price * 100).toFixed(0)}%`}
-                                </p>
-                              )}
-                            </div>
-                            <button
-                              onClick={() => handleRemoveCompetitor(c.id, skuKey)}
-                              className="text-gray-300 hover:text-red-400 text-lg leading-none ml-1 shrink-0"
-                              title="Eliminar"
-                            >×</button>
+
+                    {/* Reference prices banner */}
+                    {(pubPrice != null || catPrice != null) && (
+                      <div className="grid grid-cols-2 gap-2">
+                        {pubPrice != null && (
+                          <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-center">
+                            <p className="text-xs text-gray-400 mb-0.5">Mi precio publicación</p>
+                            <p className="text-base font-bold text-gray-900">{formatPrice(pubPrice, selected.currency_id)}</p>
                           </div>
-                        ))}
+                        )}
+                        {catPrice != null && (
+                          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-center">
+                            <p className="text-xs text-blue-400 mb-0.5">Mi precio catálogo</p>
+                            <p className="text-base font-bold text-blue-700">{formatPrice(catPrice, selected.currency_id)}</p>
+                          </div>
+                        )}
                       </div>
                     )}
-                    {comps.length === 0 && (
-                      <p className="px-5 pb-4 text-sm text-gray-400">Sin competidores vinculados.</p>
+
+                    {comps.length === 0 ? (
+                      <div className="text-center py-10 text-gray-400">
+                        <svg className="w-10 h-10 mx-auto mb-3 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                        <p className="text-sm">Sin competidores vinculados</p>
+                        <p className="text-xs mt-1">Agregá un rival para comparar precios</p>
+                      </div>
+                    ) : (
+                      <>
+                        {/* VIEW: Posición — medals */}
+                        {compView === 'position' && (
+                          <div className="space-y-2">
+                            {sortedByPrice.map((entry, idx) => {
+                              const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : null
+                              const diff = refPrice != null && !entry.isOurs ? diffVsRef(entry.price) : null
+                              const isCheaper = diff != null && diff < 0
+                              return (
+                                <div
+                                  key={entry.key}
+                                  className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
+                                    entry.isOurs
+                                      ? entry.oursType === 'cat' ? 'bg-blue-50 border-blue-300 shadow-sm' : 'bg-gray-50 border-gray-300 shadow-sm'
+                                      : 'bg-white border-gray-100'
+                                  }`}
+                                >
+                                  <div className="w-8 text-center shrink-0">
+                                    {medal ? (
+                                      <span className="text-xl">{medal}</span>
+                                    ) : (
+                                      <span className="text-sm font-bold text-gray-400">{idx + 1}</span>
+                                    )}
+                                  </div>
+                                  {entry.isOurs ? (
+                                    <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${entry.oursType === 'cat' ? 'bg-blue-200' : 'bg-gray-200'}`}>
+                                      <svg className={`w-4 h-4 ${entry.oursType === 'cat' ? 'text-blue-600' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                                    </div>
+                                  ) : entry.comp?.thumbnail ? (
+                                    <Image src={imgUrl(entry.comp.thumbnail)!} alt="" width={36} height={36} className="w-9 h-9 rounded-lg object-contain bg-gray-50 shrink-0" unoptimized />
+                                  ) : (
+                                    <div className="w-9 h-9 rounded-lg bg-gray-100 shrink-0" />
+                                  )}
+                                  <div className="flex-1 min-w-0">
+                                    <p className={`text-sm font-medium line-clamp-1 ${entry.isOurs ? (entry.oursType === 'cat' ? 'text-blue-700' : 'text-gray-600') : 'text-gray-900'}`}>
+                                      {entry.label}
+                                    </p>
+                                    <p className="text-xs text-gray-400">
+                                      {entry.isOurs ? (entry.oursType === 'cat' ? 'Nuestro — catálogo' : 'Nuestro — publicación') : 'Competidor'}
+                                    </p>
+                                  </div>
+                                  <div className="text-right shrink-0">
+                                    <p className={`text-base font-bold ${entry.isOurs && entry.oursType === 'cat' ? 'text-blue-700' : 'text-gray-900'}`}>
+                                      {formatPrice(entry.price, selected.currency_id)}
+                                    </p>
+                                    {diff != null && (
+                                      <p className={`text-xs font-semibold mt-0.5 ${isCheaper ? 'text-red-500' : 'text-green-600'}`}>
+                                        {isCheaper ? `${diff.toFixed(0)}%` : `+${diff.toFixed(0)}%`}
+                                      </p>
+                                    )}
+                                  </div>
+                                  {!entry.isOurs && (
+                                    <button
+                                      onClick={() => handleRemoveCompetitor(entry.key, skuKey)}
+                                      className="text-gray-300 hover:text-red-400 text-base leading-none shrink-0 ml-1"
+                                      title="Eliminar"
+                                    >×</button>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+
+                        {/* VIEW: Diferencia — horizontal price spectrum */}
+                        {compView === 'diff' && (() => {
+                          const allPrices = allEntries.map(e => e.price)
+                          const minPrice = Math.min(...allPrices)
+                          const maxPrice = Math.max(...allPrices)
+                          const range = maxPrice - minPrice || 1
+                          // Add 8% padding on each side
+                          const paddedMin = minPrice - range * 0.08
+                          const paddedMax = maxPrice + range * 0.08
+                          const paddedRange = paddedMax - paddedMin
+
+                          function pct(price: number) {
+                            return ((price - paddedMin) / paddedRange) * 100
+                          }
+
+                          return (
+                            <div className="space-y-4">
+                              {/* Spectrum bar */}
+                              <div className="bg-white border border-gray-100 rounded-xl p-5 pb-8">
+                                <p className="text-xs text-gray-400 mb-6 text-center">Espectro de precios</p>
+                                <div className="relative">
+                                  {/* Track */}
+                                  <div className="h-2 bg-gray-100 rounded-full relative">
+                                    {/* Colored zones: red left of our ref price, green right */}
+                                    {refPrice != null && (
+                                      <>
+                                        <div
+                                          className="absolute top-0 left-0 h-full bg-red-100 rounded-l-full"
+                                          style={{ width: `${pct(refPrice)}%` }}
+                                        />
+                                        <div
+                                          className="absolute top-0 h-full bg-green-100 rounded-r-full"
+                                          style={{ left: `${pct(refPrice)}%`, right: 0 }}
+                                        />
+                                      </>
+                                    )}
+                                  </div>
+
+                                  {/* Markers */}
+                                  {sortedByPrice.map((entry) => {
+                                    const pos = pct(entry.price)
+                                    const diff = refPrice != null && !entry.isOurs ? diffVsRef(entry.price) : null
+                                    const isCheaper = diff != null && diff < 0
+                                    const color = entry.isOurs && entry.oursType === 'cat'
+                                      ? '#2563eb'
+                                      : entry.isOurs && entry.oursType === 'pub'
+                                      ? '#6b7280'
+                                      : isCheaper ? '#ef4444' : '#16a34a'
+                                    return (
+                                      <div
+                                        key={entry.key}
+                                        className="absolute top-0 -translate-x-1/2"
+                                        style={{ left: `${pos}%` }}
+                                      >
+                                        {/* Marker dot */}
+                                        <div
+                                          className="w-4 h-4 rounded-full border-2 border-white shadow-md -mt-1"
+                                          style={{ backgroundColor: color }}
+                                          title={`${entry.label}: ${formatPrice(entry.price, selected.currency_id)}`}
+                                        />
+                                        {/* Label below */}
+                                        <div className="absolute top-5 -translate-x-1/2 left-1/2 text-center" style={{ minWidth: '60px' }}>
+                                          <p className="text-xs font-bold whitespace-nowrap" style={{ color }}>
+                                            {formatPrice(entry.price, selected.currency_id)}
+                                          </p>
+                                          {!entry.isOurs && diff != null && (
+                                            <p className="text-xs font-semibold whitespace-nowrap" style={{ color }}>
+                                              {diff > 0 ? '+' : ''}{diff.toFixed(0)}%
+                                            </p>
+                                          )}
+                                        </div>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+
+                              {/* Legend */}
+                              <div className="flex flex-wrap gap-3 text-xs">
+                                {catPrice != null && <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-blue-600 inline-block" /> Mi precio catálogo</span>}
+                                {pubPrice != null && <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-gray-500 inline-block" /> Mi precio publicación</span>}
+                                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-red-500 inline-block" /> Competidor más barato</span>
+                                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-green-600 inline-block" /> Competidor más caro</span>
+                              </div>
+
+                              {/* Detail list */}
+                              <div className="space-y-2">
+                                {allEntries
+                                  .filter(e => !e.isOurs)
+                                  .sort((a, b) => a.price - b.price)
+                                  .map(entry => {
+                                    const diffCat = catPrice != null ? diffVsRef(entry.price) : null
+                                    const diffPub = pubPrice != null ? diffVsPub(entry.price) : null
+                                    const isCheaper = (diffCat ?? diffPub ?? 0) < 0
+                                    return (
+                                      <div key={entry.key} className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${isCheaper ? 'bg-red-50 border-red-100' : 'bg-green-50 border-green-100'}`}>
+                                        {entry.comp?.thumbnail ? (
+                                          <Image src={imgUrl(entry.comp.thumbnail)!} alt="" width={36} height={36} className="w-9 h-9 rounded object-contain bg-white shrink-0" unoptimized />
+                                        ) : (
+                                          <div className="w-9 h-9 rounded bg-gray-100 shrink-0" />
+                                        )}
+                                        <div className="flex-1 min-w-0">
+                                          <a href={entry.comp?.permalink ?? '#'} target="_blank" rel="noopener noreferrer" className="text-xs font-medium text-gray-900 hover:text-blue-600 line-clamp-1 block">
+                                            {entry.label}
+                                          </a>
+                                          <div className="flex gap-3 mt-0.5">
+                                            {diffCat != null && (
+                                              <span className={`text-xs font-semibold ${isCheaper ? 'text-red-500' : 'text-green-600'}`}>
+                                                vs cat: {diffCat > 0 ? '+' : ''}{diffCat.toFixed(0)}%
+                                              </span>
+                                            )}
+                                            {diffPub != null && catPrice !== pubPrice && (
+                                              <span className={`text-xs font-semibold ${(diffPub < 0) ? 'text-red-500' : 'text-green-600'}`}>
+                                                vs pub: {diffPub > 0 ? '+' : ''}{diffPub.toFixed(0)}%
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                        <p className="text-sm font-bold text-gray-900 shrink-0">{formatPrice(entry.price, selected.currency_id)}</p>
+                                        <button
+                                          onClick={() => handleRemoveCompetitor(entry.key, skuKey)}
+                                          className="text-gray-300 hover:text-red-400 text-base leading-none shrink-0"
+                                          title="Eliminar"
+                                        >×</button>
+                                      </div>
+                                    )
+                                  })}
+                              </div>
+                            </div>
+                          )
+                        })()}
+                      </>
                     )}
                   </div>
-                )
-              })()}
+                )}
 
-              <Accordion title="General" defaultOpen>
-                <InfoRow label="ID ML" value={selected.id} />
-                <InfoRow label="SKU" value={selected.sku} />
-                <InfoRow label="Campo vendedor" value={selected.seller_custom_field} />
-                <InfoRow label="ID catálogo" value={selected.catalog_product_id} />
-                <InfoRow label="Categoría" value={selected.category_id} />
-                <InfoRow label="Dominio" value={selected.domain_id} />
-                <InfoRow label="Precio publicación" value={formatPrice(selected.price, selected.currency_id)} />
-                {selected.catalog_price != null && (
-                  <div className="flex justify-between gap-4 py-3 border-b border-gray-50">
-                    <span className="text-sm text-gray-400 shrink-0">Precio catálogo ML</span>
-                    <span className="text-sm font-medium text-right">
-                      <span className={selected.catalog_price < (selected.price ?? 0) ? 'text-blue-600' : 'text-gray-900'}>
-                        {formatPrice(selected.catalog_price, selected.currency_id)}
-                      </span>
-                      {selected.price != null && selected.catalog_price !== selected.price && (
-                        <span className="ml-1.5 text-xs text-gray-400">
-                          ({selected.catalog_price < selected.price
-                            ? `−${((selected.price - selected.catalog_price) / selected.price * 100).toFixed(1)}%`
-                            : `+${((selected.catalog_price - selected.price) / selected.price * 100).toFixed(1)}%`})
-                        </span>
+                {/* ── Details tab ── */}
+                {panelTab === 'details' && (
+                  <div className="p-4 space-y-2">
+                    <Accordion title="General" defaultOpen>
+                      <InfoRow label="ID ML" value={selected.id} />
+                      <InfoRow label="SKU" value={selected.sku} />
+                      <InfoRow label="Campo vendedor" value={selected.seller_custom_field} />
+                      <InfoRow label="ID catálogo" value={selected.catalog_product_id} />
+                      <InfoRow label="Categoría" value={selected.category_id} />
+                      <InfoRow label="Dominio" value={selected.domain_id} />
+                      <InfoRow label="Precio publicación" value={formatPrice(selected.price, selected.currency_id)} />
+                      {selected.catalog_price != null && (
+                        <div className="flex justify-between gap-4 py-3 border-b border-gray-50">
+                          <span className="text-sm text-gray-400 shrink-0">Precio catálogo ML</span>
+                          <span className="text-sm font-medium text-right">
+                            <span className={selected.catalog_price < (selected.price ?? 0) ? 'text-blue-600' : 'text-gray-900'}>
+                              {formatPrice(selected.catalog_price, selected.currency_id)}
+                            </span>
+                            {selected.price != null && selected.catalog_price !== selected.price && (
+                              <span className="ml-1.5 text-xs text-gray-400">
+                                ({selected.catalog_price < selected.price
+                                  ? `−${((selected.price - selected.catalog_price) / selected.price * 100).toFixed(1)}%`
+                                  : `+${((selected.catalog_price - selected.price) / selected.price * 100).toFixed(1)}%`})
+                              </span>
+                            )}
+                          </span>
+                        </div>
                       )}
-                    </span>
+                      <InfoRow label="Precio base" value={formatPrice(selected.base_price, selected.currency_id)} />
+                      <InfoRow label="Precio original" value={formatPrice(selected.original_price, selected.currency_id)} />
+                      <InfoRow label="Moneda" value={selected.currency_id} />
+                    </Accordion>
+                    <Accordion title="Stock y ventas">
+                      <InfoRow label="Stock disponible" value={selected.available_quantity} />
+                      <InfoRow label="Stock inicial" value={selected.initial_quantity} />
+                      <InfoRow label="Vendidos" value={selected.sold_quantity} />
+                    </Accordion>
+                    <Accordion title="Publicación">
+                      <InfoRow label="Estado" value={STATUS_LABEL[selected.status ?? ''] ?? selected.status} />
+                      <InfoRow label="Condición" value={selected.condition === 'new' ? 'Nuevo' : selected.condition === 'used' ? 'Usado' : selected.condition} />
+                      <InfoRow label="Tipo de publicación" value={selected.listing_type_id} />
+                      <InfoRow label="Modo de compra" value={selected.buying_mode} />
+                      <InfoRow label="Garantía" value={selected.warranty} />
+                      <InfoRow label="Salud" value={selected.health != null ? `${(selected.health * 100).toFixed(0)}%` : null} />
+                      <InfoRow label="Relisting automático" value={selected.automatic_relist != null ? (selected.automatic_relist ? 'Sí' : 'No') : null} />
+                      <InfoRow label="En catálogo" value={selected.catalog_listing != null ? (selected.catalog_listing ? 'Sí' : 'No') : null} />
+                    </Accordion>
+                    {selected.shipping && (
+                      <Accordion title="Envío">
+                        {Object.entries(selected.shipping).map(([key, val]) => (
+                          <InfoRow key={key} label={key} value={typeof val === 'object' ? JSON.stringify(val) : String(val)} />
+                        ))}
+                      </Accordion>
+                    )}
+                    <Accordion title="Fechas">
+                      <InfoRow label="Creado" value={formatDate(selected.date_created)} />
+                      <InfoRow label="Actualizado" value={formatDate(selected.last_updated)} />
+                      <InfoRow label="Inicio" value={formatDate(selected.start_time)} />
+                      <InfoRow label="Fin" value={formatDate(selected.stop_time)} />
+                      <InfoRow label="Sincronizado" value={formatDate(selected.synced_at)} />
+                    </Accordion>
+                    {selected.permalink && (
+                      <a href={selected.permalink} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 w-full text-sm text-blue-600 border border-blue-200 rounded-xl py-3 hover:bg-blue-50 transition-colors font-medium">
+                        Ver en MercadoLibre →
+                      </a>
+                    )}
                   </div>
                 )}
-                <InfoRow label="Precio base" value={formatPrice(selected.base_price, selected.currency_id)} />
-                <InfoRow label="Precio original" value={formatPrice(selected.original_price, selected.currency_id)} />
-                <InfoRow label="Moneda" value={selected.currency_id} />
-              </Accordion>
-
-              <Accordion title="Stock y ventas">
-                <InfoRow label="Stock disponible" value={selected.available_quantity} />
-                <InfoRow label="Stock inicial" value={selected.initial_quantity} />
-                <InfoRow label="Vendidos" value={selected.sold_quantity} />
-              </Accordion>
-
-              <Accordion title="Publicación">
-                <InfoRow label="Estado" value={STATUS_LABEL[selected.status ?? ''] ?? selected.status} />
-                <InfoRow label="Condición" value={selected.condition === 'new' ? 'Nuevo' : selected.condition === 'used' ? 'Usado' : selected.condition} />
-                <InfoRow label="Tipo de publicación" value={selected.listing_type_id} />
-                <InfoRow label="Modo de compra" value={selected.buying_mode} />
-                <InfoRow label="Garantía" value={selected.warranty} />
-                <InfoRow label="Salud" value={selected.health != null ? `${(selected.health * 100).toFixed(0)}%` : null} />
-                <InfoRow label="Relisting automático" value={selected.automatic_relist != null ? (selected.automatic_relist ? 'Sí' : 'No') : null} />
-                <InfoRow label="En catálogo" value={selected.catalog_listing != null ? (selected.catalog_listing ? 'Sí' : 'No') : null} />
-              </Accordion>
-
-              {selected.shipping && (
-                <Accordion title="Envío">
-                  {Object.entries(selected.shipping).map(([key, val]) => (
-                    <InfoRow key={key} label={key} value={typeof val === 'object' ? JSON.stringify(val) : String(val)} />
-                  ))}
-                </Accordion>
-              )}
-
-              <Accordion title="Fechas">
-                <InfoRow label="Creado" value={formatDate(selected.date_created)} />
-                <InfoRow label="Actualizado" value={formatDate(selected.last_updated)} />
-                <InfoRow label="Inicio" value={formatDate(selected.start_time)} />
-                <InfoRow label="Fin" value={formatDate(selected.stop_time)} />
-                <InfoRow label="Sincronizado" value={formatDate(selected.synced_at)} />
-              </Accordion>
-
-              {selected.permalink && (
-                <a
-                  href={selected.permalink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-2 flex items-center justify-center gap-2 w-full text-sm text-blue-600 border border-blue-200 rounded-xl py-3 hover:bg-blue-50 transition-colors font-medium"
-                >
-                  Ver en MercadoLibre →
-                </a>
-              )}
-            </div>
+              </div>
+            </>}
           </div>
-        </>}
-      </div>
+        )
+      })()}
 
       {/* Add competitor modal */}
       {showAddModal && selected && (
