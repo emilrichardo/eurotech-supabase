@@ -32,6 +32,8 @@ type Product = {
   sku: string | null
   price: number | null
   catalog_price: number | null
+  buybox_price: number | null
+  buybox_seller_id: number | null
   base_price: number | null
   original_price: number | null
   currency_id: string | null
@@ -143,6 +145,7 @@ type Competitor = {
   permalink: string | null
   seller_id: number | null
   synced_at: string | null
+  paused: boolean
 }
 
 type LinkMode = 'mlu' | 'sku'
@@ -319,10 +322,34 @@ export default function ProductsTable({
   const [showAddModal, setShowAddModal] = useState(false)
   const [search, setSearch] = useState('')
   const [onlyWithCompetitors, setOnlyWithCompetitors] = useState(false)
-  const [syncing, setSyncing] = useState(false)
-  const [syncMsg, setSyncMsg] = useState<string | null>(null)
   const [panelTab, setPanelTab] = useState<'competitors' | 'details'>('competitors')
-  const [compView, setCompView] = useState<'position' | 'diff'>('position')
+  const [openGear, setOpenGear] = useState<string | null>(null)
+  const [syncingProduct, setSyncingProduct] = useState(false)
+  const [syncProductMsg, setSyncProductMsg] = useState<string | null>(null)
+
+  async function handleSyncProduct(productId: string) {
+    setSyncingProduct(true)
+    setSyncProductMsg(null)
+    try {
+      const res = await fetch(`/api/sync-product?id=${productId}`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error')
+      // Update selected product in state with fresh prices
+      setSelected(prev => prev ? {
+        ...prev,
+        price: data.price ?? prev.price,
+        catalog_price: data.catalog_price ?? prev.catalog_price,
+        buybox_price: data.buybox_price ?? prev.buybox_price,
+        buybox_seller_id: data.buybox_seller_id ?? prev.buybox_seller_id,
+      } : prev)
+      setSyncProductMsg('Actualizado')
+    } catch (e) {
+      setSyncProductMsg(e instanceof Error ? e.message : 'Error')
+    } finally {
+      setSyncingProduct(false)
+      setTimeout(() => setSyncProductMsg(null), 3000)
+    }
+  }
 
   function handleSelect(p: Product) {
     setSelected(selected?.id === p.id ? null : p)
@@ -335,26 +362,6 @@ export default function ProductsTable({
     }))
   }
 
-  async function handleSyncCompetitors() {
-    setSyncing(true)
-    setSyncMsg(null)
-    try {
-      const res = await fetch('/api/sync-competitors', { method: 'POST' })
-      const data = await res.json()
-      if (res.ok) {
-        setSyncMsg(`Actualizados ${data.updated} de ${data.total} competidores`)
-        // Reload the page to get fresh data
-        setTimeout(() => window.location.reload(), 1200)
-      } else {
-        setSyncMsg(`Error: ${data.error}`)
-      }
-    } catch {
-      setSyncMsg('Error al sincronizar')
-    } finally {
-      setSyncing(false)
-    }
-  }
-
   async function handleRemoveCompetitor(itemId: string, sku: string) {
     await fetch('/api/competitors', {
       method: 'DELETE',
@@ -365,6 +372,20 @@ export default function ProductsTable({
       ...prev,
       [sku]: (prev[sku] ?? []).filter(c => c.id !== itemId),
     }))
+    setOpenGear(null)
+  }
+
+  async function handlePauseCompetitor(itemId: string, sku: string, paused: boolean) {
+    await fetch('/api/competitors', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ itemId, ourSku: sku, paused }),
+    })
+    setLocalCompetitors(prev => ({
+      ...prev,
+      [sku]: (prev[sku] ?? []).map(c => c.id === itemId ? { ...c, paused } : c),
+    }))
+    setOpenGear(null)
   }
 
   // Collect unique categories with names for filter
@@ -445,23 +466,6 @@ export default function ProductsTable({
           <span className="w-2 h-2 rounded-full bg-orange-400 inline-block" />
           Con rivales
         </button>
-
-        {/* Sync competitors */}
-        <button
-          onClick={handleSyncCompetitors}
-          disabled={syncing}
-          title="Actualizar precios de todos los competidores"
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-50 transition-colors"
-        >
-          <svg className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          {syncing ? 'Actualizando...' : 'Sincronizar rivales'}
-        </button>
-
-        {syncMsg && (
-          <span className="text-xs text-gray-500 px-2">{syncMsg}</span>
-        )}
 
         {/* View switcher */}
         <div className="flex gap-1 ml-auto">
@@ -551,11 +555,12 @@ export default function ProductsTable({
         <div className="space-y-2">
           {filteredProducts.map((p) => {
             const compCount = p.sku ? (localCompetitors[p.sku]?.length ?? 0) : 0
+            const losingBuybox = p.buybox_price != null && (p.catalog_price == null || p.buybox_price < p.catalog_price)
             return (
               <div
                 key={p.id}
                 onClick={() => handleSelect(p)}
-                className={`flex items-center gap-4 bg-white rounded-xl border px-4 py-3 cursor-pointer transition-colors ${selected?.id === p.id ? 'border-blue-300 bg-blue-50' : compCount > 0 ? 'border-orange-100 hover:bg-orange-50/20' : 'border-gray-100 hover:bg-gray-50'}`}
+                className={`flex items-center gap-4 bg-white rounded-xl border px-4 py-3 cursor-pointer transition-colors ${selected?.id === p.id ? 'border-blue-300 bg-blue-50' : losingBuybox ? 'border-red-200 hover:bg-red-50/20' : compCount > 0 ? 'border-orange-100 hover:bg-orange-50/20' : 'border-gray-100 hover:bg-gray-50'}`}
               >
                 {p.thumbnail ? (
                   <Image src={imgUrl(p.thumbnail)!} alt={p.title} width={72} height={72} className="rounded object-contain w-[72px] h-[72px] shrink-0" unoptimized />
@@ -566,11 +571,17 @@ export default function ProductsTable({
                   <div className="flex items-center gap-2">
                     <p className="font-medium text-gray-900 line-clamp-1">{p.title}</p>
                     <CompetitorDot count={compCount} />
+                    {losingBuybox && (
+                      <span className="text-xs font-semibold bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full">Perdemos buy-box</span>
+                    )}
                   </div>
                   <p className="text-xs text-gray-400 mt-0.5 font-mono">{p.sku ?? p.id}</p>
                 </div>
                 <div className="text-right shrink-0">
                   <p className="font-semibold text-gray-900">{formatPrice(p.price, p.currency_id)}</p>
+                  {losingBuybox && p.buybox_price != null && (
+                    <p className="text-xs text-red-500 font-medium">buy-box: {formatPrice(p.buybox_price, p.currency_id)}</p>
+                  )}
                   <p className="text-xs text-gray-400 mt-0.5">Stock: {p.available_quantity ?? '—'}</p>
                   <p className={`text-xs mt-0.5 ${isStale(p.last_updated) ? 'text-amber-500 font-medium' : 'text-gray-400'}`}>
                     {formatRelative(p.last_updated)}
@@ -590,17 +601,22 @@ export default function ProductsTable({
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
           {filteredProducts.map((p) => {
             const compCount = p.sku ? (localCompetitors[p.sku]?.length ?? 0) : 0
+            const losingBuybox = p.buybox_price != null && (p.catalog_price == null || p.buybox_price < p.catalog_price)
             return (
               <div
                 key={p.id}
                 onClick={() => handleSelect(p)}
-                className={`bg-white rounded-xl border overflow-hidden cursor-pointer transition-colors relative ${selected?.id === p.id ? 'border-blue-300 bg-blue-50' : compCount > 0 ? 'border-orange-200 hover:border-orange-300' : 'border-gray-100 hover:border-gray-300'}`}
+                className={`bg-white rounded-xl border overflow-hidden cursor-pointer transition-colors relative ${selected?.id === p.id ? 'border-blue-300 bg-blue-50' : losingBuybox ? 'border-red-300 hover:border-red-400' : compCount > 0 ? 'border-orange-200 hover:border-orange-300' : 'border-gray-100 hover:border-gray-300'}`}
               >
-                {compCount > 0 && (
-                  <div className="absolute top-2 right-2 z-10">
-                    <CompetitorDot count={compCount} />
-                  </div>
-                )}
+                {/* Top-right badge */}
+                <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
+                  {losingBuybox && (
+                    <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-tight shadow-sm">
+                      ↓ buy-box
+                    </span>
+                  )}
+                  {compCount > 0 && <CompetitorDot count={compCount} />}
+                </div>
                 <div className="flex items-center justify-center bg-gray-50 h-40">
                   {p.thumbnail ? (
                     <Image src={imgUrl(p.thumbnail)!} alt={p.title} width={140} height={140} className="object-contain w-full h-full p-3" unoptimized />
@@ -614,11 +630,15 @@ export default function ProductsTable({
                   <div className="mt-2 flex items-center justify-between gap-1">
                     <div>
                       <span className="text-sm font-semibold text-gray-900">{formatPrice(p.price, p.currency_id)}</span>
-                      {p.catalog_price != null && p.catalog_price !== p.price && (
+                      {losingBuybox && p.buybox_price != null ? (
+                        <span className="ml-1.5 text-xs text-red-500 font-medium" title="Buy-box ganado por rival">
+                          rival: {formatPrice(p.buybox_price, p.currency_id)}
+                        </span>
+                      ) : p.catalog_price != null && p.catalog_price !== p.price ? (
                         <span className="ml-1.5 text-xs text-blue-600 font-medium" title="Precio catálogo ML">
                           cat. {formatPrice(p.catalog_price, p.currency_id)}
                         </span>
-                      )}
+                      ) : null}
                     </div>
                     <span className={`px-1.5 py-0.5 rounded-full text-xs font-medium ${STATUS_COLOR[p.status ?? ''] ?? 'bg-gray-100 text-gray-600'}`}>
                       {STATUS_LABEL[p.status ?? ''] ?? p.status ?? '—'}
@@ -641,6 +661,9 @@ export default function ProductsTable({
         const compCount = comps.length
         const pubPrice = selected?.price ?? null
         const catPrice = selected?.catalog_price ?? null
+        const buyboxPrice = selected?.buybox_price ?? null
+        // buybox is a competitor's price when it differs from our catalog price
+        const buyboxIsCompetitor = buyboxPrice != null && buyboxPrice !== catPrice
         const refPrice = catPrice ?? pubPrice // primary reference for comparisons
 
         // Build unified sorted list for competitor views
@@ -675,7 +698,24 @@ export default function ProductsTable({
               {/* Header */}
               <div className="flex items-start justify-between px-5 py-3 border-b border-gray-100 shrink-0">
                 <h2 className="font-semibold text-gray-900 leading-snug line-clamp-2 text-sm flex-1 min-w-0 pr-3">{selected.title}</h2>
-                <button onClick={() => setSelected(null)} className="shrink-0 text-gray-400 hover:text-gray-700 text-2xl leading-none">×</button>
+                <div className="flex items-center gap-2 shrink-0">
+                  {syncProductMsg && (
+                    <span className={`text-xs font-medium ${syncProductMsg === 'Actualizado' ? 'text-green-600' : 'text-red-500'}`}>
+                      {syncProductMsg}
+                    </span>
+                  )}
+                  <button
+                    onClick={() => handleSyncProduct(selected.id)}
+                    disabled={syncingProduct}
+                    title="Sincronizar precios"
+                    className="text-gray-400 hover:text-blue-600 disabled:opacity-40 transition-colors p-1"
+                  >
+                    <svg className={`w-4 h-4 ${syncingProduct ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  </button>
+                  <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-700 text-2xl leading-none">×</button>
+                </div>
               </div>
 
               {/* Top 2-col: image + key info */}
@@ -716,9 +756,27 @@ export default function ProductsTable({
                       </div>
                       {catPrice != null && (
                         <div className="flex items-baseline justify-between">
-                          <span className="text-xs text-gray-400">Precio cat.</span>
+                          <span className="text-xs text-gray-400">Mi cat.</span>
                           <span className={`text-base font-semibold ${catPrice < (pubPrice ?? Infinity) ? 'text-blue-600' : 'text-gray-700'}`}>
                             {formatPrice(catPrice, selected.currency_id)}
+                          </span>
+                        </div>
+                      )}
+                      {selected.buybox_price != null && selected.buybox_price !== catPrice && (
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-xs text-gray-400">
+                            Buy-box cat. {catPrice == null ? <span className="text-orange-400">(rival)</span> : <span className="text-orange-400">(rival gana)</span>}
+                          </span>
+                          <span className="text-base font-semibold text-orange-500">
+                            {formatPrice(selected.buybox_price, selected.currency_id)}
+                          </span>
+                        </div>
+                      )}
+                      {selected.buybox_price != null && selected.buybox_price === catPrice && (
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-xs text-gray-400">Buy-box cat. <span className="text-green-500">(ganamos)</span></span>
+                          <span className="text-base font-semibold text-green-600">
+                            {formatPrice(selected.buybox_price, selected.currency_id)}
                           </span>
                         </div>
                       )}
@@ -764,18 +822,7 @@ export default function ProductsTable({
                 {panelTab === 'competitors' && (
                   <div className="p-4 space-y-4">
                     {/* Toolbar */}
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex gap-1 bg-gray-100 p-0.5 rounded-lg">
-                        {([['position', 'Posición'], ['diff', 'Diferencia']] as [typeof compView, string][]).map(([mode, label]) => (
-                          <button
-                            key={mode}
-                            onClick={() => setCompView(mode)}
-                            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${compView === mode ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
+                    <div className="flex items-center justify-end">
                       <button
                         onClick={() => setShowAddModal(true)}
                         className="flex items-center gap-1 text-xs font-medium bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 transition-colors"
@@ -785,18 +832,34 @@ export default function ProductsTable({
                     </div>
 
                     {/* Reference prices banner */}
-                    {(pubPrice != null || catPrice != null) && (
+                    {(pubPrice != null || catPrice != null || buyboxPrice != null) && (
                       <div className="grid grid-cols-2 gap-2">
                         {pubPrice != null && (
                           <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-center">
-                            <p className="text-xs text-gray-400 mb-0.5">Mi precio publicación</p>
+                            <p className="text-xs text-gray-400 mb-0.5">Mi precio pub.</p>
                             <p className="text-base font-bold text-gray-900">{formatPrice(pubPrice, selected.currency_id)}</p>
                           </div>
                         )}
                         {catPrice != null && (
-                          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-center">
-                            <p className="text-xs text-blue-400 mb-0.5">Mi precio catálogo</p>
-                            <p className="text-base font-bold text-blue-700">{formatPrice(catPrice, selected.currency_id)}</p>
+                          <div className={`rounded-xl p-3 text-center border ${buyboxIsCompetitor ? 'bg-blue-50 border-blue-200' : 'bg-green-50 border-green-200'}`}>
+                            <p className={`text-xs mb-0.5 ${buyboxIsCompetitor ? 'text-blue-400' : 'text-green-500'}`}>
+                              Mi precio cat.{!buyboxIsCompetitor && ' 🏆'}
+                            </p>
+                            <p className={`text-base font-bold ${buyboxIsCompetitor ? 'text-blue-700' : 'text-green-700'}`}>
+                              {formatPrice(catPrice, selected.currency_id)}
+                            </p>
+                          </div>
+                        )}
+                        {buyboxIsCompetitor && (
+                          <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-center">
+                            <p className="text-xs text-orange-400 mb-0.5">Buy-box rival</p>
+                            <p className="text-base font-bold text-orange-600">{formatPrice(buyboxPrice, selected.currency_id)}</p>
+                          </div>
+                        )}
+                        {buyboxPrice != null && catPrice == null && (
+                          <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-center">
+                            <p className="text-xs text-orange-400 mb-0.5">Buy-box catálogo (rival)</p>
+                            <p className="text-base font-bold text-orange-600">{formatPrice(buyboxPrice, selected.currency_id)}</p>
                           </div>
                         )}
                       </div>
@@ -810,197 +873,109 @@ export default function ProductsTable({
                       </div>
                     ) : (
                       <>
-                        {/* VIEW: Posición — medals */}
-                        {compView === 'position' && (
-                          <div className="space-y-2">
-                            {sortedByPrice.map((entry, idx) => {
-                              const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : null
-                              const diff = refPrice != null && !entry.isOurs ? diffVsRef(entry.price) : null
-                              const isCheaper = diff != null && diff < 0
-                              return (
-                                <div
-                                  key={entry.key}
-                                  className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
-                                    entry.isOurs
-                                      ? entry.oursType === 'cat' ? 'bg-blue-50 border-blue-300 shadow-sm' : 'bg-gray-50 border-gray-300 shadow-sm'
-                                      : 'bg-white border-gray-100'
-                                  }`}
-                                >
-                                  <div className="w-8 text-center shrink-0">
-                                    {medal ? (
-                                      <span className="text-xl">{medal}</span>
-                                    ) : (
-                                      <span className="text-sm font-bold text-gray-400">{idx + 1}</span>
-                                    )}
+                        {/* Posición con gear dropdown y pausado */}
+                        {(() => {
+                          const active = sortedByPrice.filter(e => e.isOurs || !e.comp?.paused)
+                          const pausedEntries = sortedByPrice.filter(e => !e.isOurs && e.comp?.paused)
+                          function renderEntry(entry: typeof sortedByPrice[0], idx: number) {
+                            const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : null
+                            const diff = refPrice != null && !entry.isOurs ? diffVsRef(entry.price) : null
+                            const isCheaper = diff != null && diff < 0
+                            const isPaused = !entry.isOurs && entry.comp?.paused
+                            const gearKey = entry.key
+                            return (
+                              <div
+                                key={entry.key}
+                                className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
+                                  isPaused ? 'bg-gray-50 border-gray-100 opacity-50'
+                                    : entry.isOurs
+                                    ? entry.oursType === 'cat' ? 'bg-blue-50 border-blue-300 shadow-sm' : 'bg-gray-50 border-gray-300 shadow-sm'
+                                    : 'bg-white border-gray-100'
+                                }`}
+                              >
+                                <div className="w-7 text-center shrink-0">
+                                  {isPaused ? <span className="text-sm text-gray-300">—</span>
+                                    : medal ? <span className="text-xl">{medal}</span>
+                                    : <span className="text-sm font-bold text-gray-400">{idx + 1}</span>}
+                                </div>
+                                {entry.isOurs ? (
+                                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${entry.oursType === 'cat' ? 'bg-blue-200' : 'bg-gray-200'}`}>
+                                    <svg className={`w-4 h-4 ${entry.oursType === 'cat' ? 'text-blue-600' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
                                   </div>
-                                  {entry.isOurs ? (
-                                    <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${entry.oursType === 'cat' ? 'bg-blue-200' : 'bg-gray-200'}`}>
-                                      <svg className={`w-4 h-4 ${entry.oursType === 'cat' ? 'text-blue-600' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-                                    </div>
-                                  ) : entry.comp?.thumbnail ? (
-                                    <Image src={imgUrl(entry.comp.thumbnail)!} alt="" width={36} height={36} className="w-9 h-9 rounded-lg object-contain bg-gray-50 shrink-0" unoptimized />
-                                  ) : (
-                                    <div className="w-9 h-9 rounded-lg bg-gray-100 shrink-0" />
+                                ) : entry.comp?.thumbnail ? (
+                                  <Image src={imgUrl(entry.comp.thumbnail)!} alt="" width={36} height={36} className="w-9 h-9 rounded-lg object-contain bg-gray-50 shrink-0" unoptimized />
+                                ) : (
+                                  <div className="w-9 h-9 rounded-lg bg-gray-100 shrink-0" />
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <p className={`text-sm font-medium line-clamp-1 ${entry.isOurs ? (entry.oursType === 'cat' ? 'text-blue-700' : 'text-gray-600') : isPaused ? 'text-gray-400' : 'text-gray-900'}`}>
+                                    {entry.label}
+                                  </p>
+                                  <p className="text-xs text-gray-400">
+                                    {entry.isOurs ? (entry.oursType === 'cat' ? 'Nuestro — catálogo' : 'Nuestro — publicación') : isPaused ? 'Pausado' : 'Competidor'}
+                                  </p>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <p className={`text-base font-bold ${entry.isOurs && entry.oursType === 'cat' ? 'text-blue-700' : isPaused ? 'text-gray-400' : 'text-gray-900'}`}>
+                                    {formatPrice(entry.price, selected?.currency_id ?? null)}
+                                  </p>
+                                  {!isPaused && diff != null && (
+                                    <p className={`text-xs font-semibold mt-0.5 ${isCheaper ? 'text-red-500' : 'text-green-600'}`}>
+                                      {isCheaper ? `${diff.toFixed(0)}%` : `+${diff.toFixed(0)}%`}
+                                    </p>
                                   )}
-                                  <div className="flex-1 min-w-0">
-                                    <p className={`text-sm font-medium line-clamp-1 ${entry.isOurs ? (entry.oursType === 'cat' ? 'text-blue-700' : 'text-gray-600') : 'text-gray-900'}`}>
-                                      {entry.label}
-                                    </p>
-                                    <p className="text-xs text-gray-400">
-                                      {entry.isOurs ? (entry.oursType === 'cat' ? 'Nuestro — catálogo' : 'Nuestro — publicación') : 'Competidor'}
-                                    </p>
-                                  </div>
-                                  <div className="text-right shrink-0">
-                                    <p className={`text-base font-bold ${entry.isOurs && entry.oursType === 'cat' ? 'text-blue-700' : 'text-gray-900'}`}>
-                                      {formatPrice(entry.price, selected.currency_id)}
-                                    </p>
-                                    {diff != null && (
-                                      <p className={`text-xs font-semibold mt-0.5 ${isCheaper ? 'text-red-500' : 'text-green-600'}`}>
-                                        {isCheaper ? `${diff.toFixed(0)}%` : `+${diff.toFixed(0)}%`}
-                                      </p>
-                                    )}
-                                  </div>
-                                  {!entry.isOurs && (
+                                </div>
+                                {!entry.isOurs && (
+                                  <div className="relative shrink-0 ml-1">
                                     <button
-                                      onClick={() => handleRemoveCompetitor(entry.key, skuKey)}
-                                      className="text-gray-300 hover:text-red-400 text-base leading-none shrink-0 ml-1"
-                                      title="Eliminar"
-                                    >×</button>
-                                  )}
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-
-                        {/* VIEW: Diferencia — horizontal price spectrum */}
-                        {compView === 'diff' && (() => {
-                          const allPrices = allEntries.map(e => e.price)
-                          const minPrice = Math.min(...allPrices)
-                          const maxPrice = Math.max(...allPrices)
-                          const range = maxPrice - minPrice || 1
-                          // Add 8% padding on each side
-                          const paddedMin = minPrice - range * 0.08
-                          const paddedMax = maxPrice + range * 0.08
-                          const paddedRange = paddedMax - paddedMin
-
-                          function pct(price: number) {
-                            return ((price - paddedMin) / paddedRange) * 100
-                          }
-
-                          return (
-                            <div className="space-y-4">
-                              {/* Spectrum bar */}
-                              <div className="bg-white border border-gray-100 rounded-xl p-5 pb-8">
-                                <p className="text-xs text-gray-400 mb-6 text-center">Espectro de precios</p>
-                                <div className="relative">
-                                  {/* Track */}
-                                  <div className="h-2 bg-gray-100 rounded-full relative">
-                                    {/* Colored zones: red left of our ref price, green right */}
-                                    {refPrice != null && (
-                                      <>
-                                        <div
-                                          className="absolute top-0 left-0 h-full bg-red-100 rounded-l-full"
-                                          style={{ width: `${pct(refPrice)}%` }}
-                                        />
-                                        <div
-                                          className="absolute top-0 h-full bg-green-100 rounded-r-full"
-                                          style={{ left: `${pct(refPrice)}%`, right: 0 }}
-                                        />
-                                      </>
+                                      onClick={e => { e.stopPropagation(); setOpenGear(openGear === gearKey ? null : gearKey) }}
+                                      className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                                    >
+                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                      </svg>
+                                    </button>
+                                    {openGear === gearKey && (
+                                      <div className="absolute right-0 top-8 z-50 bg-white border border-gray-200 rounded-xl shadow-xl py-1 w-44" onClick={e => e.stopPropagation()}>
+                                        {entry.comp?.permalink && (
+                                          <a href={entry.comp.permalink} target="_blank" rel="noopener noreferrer"
+                                            className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                                            onClick={() => setOpenGear(null)}>
+                                            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                                            Ver publicación
+                                          </a>
+                                        )}
+                                        <button onClick={() => handlePauseCompetitor(entry.key, skuKey, !isPaused)}
+                                          className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors text-left">
+                                          {isPaused ? (
+                                            <><svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>Activar</>
+                                          ) : (
+                                            <><svg className="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>Pausar</>
+                                          )}
+                                        </button>
+                                        <div className="border-t border-gray-100 my-1" />
+                                        <button onClick={() => handleRemoveCompetitor(entry.key, skuKey)}
+                                          className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors text-left">
+                                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                          Eliminar
+                                        </button>
+                                      </div>
                                     )}
                                   </div>
-
-                                  {/* Markers */}
-                                  {sortedByPrice.map((entry) => {
-                                    const pos = pct(entry.price)
-                                    const diff = refPrice != null && !entry.isOurs ? diffVsRef(entry.price) : null
-                                    const isCheaper = diff != null && diff < 0
-                                    const color = entry.isOurs && entry.oursType === 'cat'
-                                      ? '#2563eb'
-                                      : entry.isOurs && entry.oursType === 'pub'
-                                      ? '#6b7280'
-                                      : isCheaper ? '#ef4444' : '#16a34a'
-                                    return (
-                                      <div
-                                        key={entry.key}
-                                        className="absolute top-0 -translate-x-1/2"
-                                        style={{ left: `${pos}%` }}
-                                      >
-                                        {/* Marker dot */}
-                                        <div
-                                          className="w-4 h-4 rounded-full border-2 border-white shadow-md -mt-1"
-                                          style={{ backgroundColor: color }}
-                                          title={`${entry.label}: ${formatPrice(entry.price, selected.currency_id)}`}
-                                        />
-                                        {/* Label below */}
-                                        <div className="absolute top-5 -translate-x-1/2 left-1/2 text-center" style={{ minWidth: '60px' }}>
-                                          <p className="text-xs font-bold whitespace-nowrap" style={{ color }}>
-                                            {formatPrice(entry.price, selected.currency_id)}
-                                          </p>
-                                          {!entry.isOurs && diff != null && (
-                                            <p className="text-xs font-semibold whitespace-nowrap" style={{ color }}>
-                                              {diff > 0 ? '+' : ''}{diff.toFixed(0)}%
-                                            </p>
-                                          )}
-                                        </div>
-                                      </div>
-                                    )
-                                  })}
-                                </div>
+                                )}
                               </div>
-
-                              {/* Legend */}
-                              <div className="flex flex-wrap gap-3 text-xs">
-                                {catPrice != null && <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-blue-600 inline-block" /> Mi precio catálogo</span>}
-                                {pubPrice != null && <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-gray-500 inline-block" /> Mi precio publicación</span>}
-                                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-red-500 inline-block" /> Competidor más barato</span>
-                                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-green-600 inline-block" /> Competidor más caro</span>
-                              </div>
-
-                              {/* Detail list */}
-                              <div className="space-y-2">
-                                {allEntries
-                                  .filter(e => !e.isOurs)
-                                  .sort((a, b) => a.price - b.price)
-                                  .map(entry => {
-                                    const diffCat = catPrice != null ? diffVsRef(entry.price) : null
-                                    const diffPub = pubPrice != null ? diffVsPub(entry.price) : null
-                                    const isCheaper = (diffCat ?? diffPub ?? 0) < 0
-                                    return (
-                                      <div key={entry.key} className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${isCheaper ? 'bg-red-50 border-red-100' : 'bg-green-50 border-green-100'}`}>
-                                        {entry.comp?.thumbnail ? (
-                                          <Image src={imgUrl(entry.comp.thumbnail)!} alt="" width={36} height={36} className="w-9 h-9 rounded object-contain bg-white shrink-0" unoptimized />
-                                        ) : (
-                                          <div className="w-9 h-9 rounded bg-gray-100 shrink-0" />
-                                        )}
-                                        <div className="flex-1 min-w-0">
-                                          <a href={entry.comp?.permalink ?? '#'} target="_blank" rel="noopener noreferrer" className="text-xs font-medium text-gray-900 hover:text-blue-600 line-clamp-1 block">
-                                            {entry.label}
-                                          </a>
-                                          <div className="flex gap-3 mt-0.5">
-                                            {diffCat != null && (
-                                              <span className={`text-xs font-semibold ${isCheaper ? 'text-red-500' : 'text-green-600'}`}>
-                                                vs cat: {diffCat > 0 ? '+' : ''}{diffCat.toFixed(0)}%
-                                              </span>
-                                            )}
-                                            {diffPub != null && catPrice !== pubPrice && (
-                                              <span className={`text-xs font-semibold ${(diffPub < 0) ? 'text-red-500' : 'text-green-600'}`}>
-                                                vs pub: {diffPub > 0 ? '+' : ''}{diffPub.toFixed(0)}%
-                                              </span>
-                                            )}
-                                          </div>
-                                        </div>
-                                        <p className="text-sm font-bold text-gray-900 shrink-0">{formatPrice(entry.price, selected.currency_id)}</p>
-                                        <button
-                                          onClick={() => handleRemoveCompetitor(entry.key, skuKey)}
-                                          className="text-gray-300 hover:text-red-400 text-base leading-none shrink-0"
-                                          title="Eliminar"
-                                        >×</button>
-                                      </div>
-                                    )
-                                  })}
-                              </div>
+                            )
+                          }
+                          return (
+                            <div className="space-y-2" onClick={() => setOpenGear(null)}>
+                              {active.map((e, idx) => renderEntry(e, idx))}
+                              {pausedEntries.length > 0 && (
+                                <>
+                                  <p className="text-xs text-gray-400 pt-2 pb-1 px-1">Pausados</p>
+                                  {pausedEntries.map(e => renderEntry(e, -1))}
+                                </>
+                              )}
                             </div>
                           )
                         })()}

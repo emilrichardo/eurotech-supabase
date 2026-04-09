@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import ProductsTable from './ProductsTable'
+import SyncButton from './SyncButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,7 +11,7 @@ export default async function ProductosPage() {
     supabase
       .from('ml_products')
       .select(
-        `id, title, subtitle, sku, price, catalog_price, base_price, original_price, currency_id,
+        `id, title, subtitle, sku, price, catalog_price, buybox_price, buybox_seller_id, base_price, original_price, currency_id,
          available_quantity, sold_quantity, initial_quantity,
          status, condition, listing_type_id, buying_mode,
          thumbnail, permalink, category_id, domain_id,
@@ -25,7 +26,7 @@ export default async function ProductosPage() {
 
     supabase
       .from('ml_competitor_items')
-      .select('id, our_sku, title, price, currency_id, status, thumbnail, permalink, seller_id, synced_at'),
+      .select('id, our_sku, title, price, currency_id, status, thumbnail, permalink, seller_id, synced_at, paused'),
 
     supabase
       .from('ml_categories')
@@ -64,6 +65,7 @@ export default async function ProductosPage() {
           <h1 className="text-2xl font-bold text-gray-900">Productos</h1>
           <p className="text-gray-500 text-sm mt-0.5">{count ?? 0} publicaciones</p>
         </div>
+        <SyncButton />
       </div>
 
       {!products || products.length === 0 ? (

@@ -28,7 +28,12 @@ export async function POST() {
     .select('id, catalog_product_id, user_product_id, seller_id')
     .or('catalog_product_id.not.is.null,user_product_id.not.is.null')
 
-  const catalogUpdates: { id: string; catalog_price: number }[] = []
+  const catalogUpdates: {
+    id: string
+    catalog_price: number | null
+    buybox_price: number | null
+    buybox_seller_id: number | null
+  }[] = []
 
   // Batch catalog lookups (25 concurrent max)
   const BATCH = 25
@@ -40,17 +45,26 @@ export async function POST() {
       const catalogId = p.catalog_product_id ?? p.user_product_id
       try {
         const res = await fetch(
-          `${ML_API}/products/${catalogId}/items?status=active`,
+          `${ML_API}/products/${catalogId}/items`,
           { headers }
         )
         if (!res.ok) return
         const data = await res.json()
-        const ourItem = data.results?.find(
-          (r: { seller_id: number }) => r.seller_id === (p.seller_id ?? user_id)
-        )
-        if (ourItem?.price != null) {
-          catalogUpdates.push({ id: p.id, catalog_price: ourItem.price })
-        }
+        const results: Array<{ seller_id: number; price: number }> = data.results ?? []
+        if (results.length === 0) return
+
+        const ourSellerId = Number(p.seller_id ?? user_id)
+
+        // Our price within the catalog (null if we don't participate)
+        const ourItem = results.find(r => r.seller_id === ourSellerId)
+        const catalog_price = ourItem?.price ?? null
+
+        // Buy-box winner: cheapest across all sellers
+        const buyboxItem = results.reduce((a, b) => a.price <= b.price ? a : b)
+        const buybox_price = buyboxItem.price
+        const buybox_seller_id = buyboxItem.seller_id
+
+        catalogUpdates.push({ id: p.id, catalog_price, buybox_price, buybox_seller_id })
       } catch { /* skip */ }
     }))
   }
@@ -59,7 +73,11 @@ export async function POST() {
   for (const upd of catalogUpdates) {
     await admin
       .from('ml_products')
-      .update({ catalog_price: upd.catalog_price })
+      .update({
+        catalog_price: upd.catalog_price,
+        buybox_price: upd.buybox_price,
+        buybox_seller_id: upd.buybox_seller_id,
+      })
       .eq('id', upd.id)
   }
 

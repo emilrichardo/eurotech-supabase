@@ -212,6 +212,20 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true, item: record })
 }
 
+export async function PATCH(req: NextRequest) {
+  const { itemId, ourSku, paused } = await req.json()
+  const admin = createAdminClient()
+
+  const { error } = await admin
+    .from('ml_competitor_items')
+    .update({ paused })
+    .eq('id', itemId)
+    .eq('our_sku', ourSku)
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ ok: true })
+}
+
 export async function DELETE(req: NextRequest) {
   const { itemId, ourSku } = await req.json()
   const admin = createAdminClient()
