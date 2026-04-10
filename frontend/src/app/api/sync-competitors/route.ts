@@ -18,6 +18,80 @@ async function fetchNickname(sellerId: number, headers: Record<string, string>):
   } catch { return null }
 }
 
+type Rule = {
+  id: string
+  rule_type: string
+  sku: string | null
+  threshold_pct: number | null
+}
+
+type AlertInsert = {
+  rule_id: string
+  our_sku: string
+  competitor_item_id: string
+  our_price: number | null
+  competitor_price_before: number | null
+  competitor_price_after: number | null
+  diff_pct: number | null
+}
+
+function evaluateRules(
+  rules: Rule[],
+  item: { id: string; our_sku: string; price: number | null },
+  priceBefore: number | null,
+  priceAfter: number | null,
+  ourPrice: number | null,
+): AlertInsert[] {
+  if (priceBefore == null || priceAfter == null) return []
+  if (priceBefore === priceAfter) return []
+
+  const diffPct = ourPrice != null && ourPrice > 0
+    ? ((ourPrice - priceAfter) / ourPrice) * 100
+    : null
+
+  const alerts: AlertInsert[] = []
+
+  for (const rule of rules) {
+    // Skip rules scoped to a different SKU
+    if (rule.sku && rule.sku !== item.our_sku) continue
+
+    let fires = false
+    switch (rule.rule_type) {
+      case 'price_changed':
+        fires = true
+        break
+      case 'competitor_cheaper':
+        fires = ourPrice != null && priceAfter < ourPrice
+        break
+      case 'competitor_pricier':
+        fires = ourPrice != null && priceAfter > ourPrice
+        break
+      case 'price_diff_pct_above':
+        // competitor cheaper than us by more than threshold%
+        fires = diffPct != null && rule.threshold_pct != null && diffPct > rule.threshold_pct
+        break
+      case 'price_diff_pct_below':
+        // competitor more expensive than us by more than threshold%
+        fires = diffPct != null && rule.threshold_pct != null && diffPct < -rule.threshold_pct
+        break
+    }
+
+    if (fires) {
+      alerts.push({
+        rule_id: rule.id,
+        our_sku: item.our_sku,
+        competitor_item_id: item.id,
+        our_price: ourPrice,
+        competitor_price_before: priceBefore,
+        competitor_price_after: priceAfter,
+        diff_pct: diffPct,
+      })
+    }
+  }
+
+  return alerts
+}
+
 export async function POST() {
   const admin = createAdminClient()
 
@@ -35,21 +109,32 @@ export async function POST() {
   const headers = { Authorization: `Bearer ${tokenRow.access_token}` }
   const ourSellerId = tokenRow.user_id as number | null
 
+  // Load competitor items (including current price as "before")
   const { data: items, error } = await admin
     .from('ml_competitor_items')
-    .select('id, our_sku, permalink, seller_id, seller_name')
+    .select('id, our_sku, permalink, seller_id, seller_name, price')
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   if (!items || items.length === 0) {
     return NextResponse.json({ ok: true, updated: 0 })
   }
 
+  // Load enabled alert rules and our product prices (for diff calculation)
+  const [rulesRes, productsRes] = await Promise.all([
+    admin.from('ml_price_alert_rules').select('id, rule_type, sku, threshold_pct').eq('enabled', true),
+    admin.from('ml_products').select('sku, price').not('sku', 'is', null),
+  ])
+
+  const rules: Rule[] = rulesRes.data ?? []
+  const ourPriceMap: Record<string, number | null> = {}
+  for (const p of productsRes.data ?? []) {
+    if (p.sku) ourPriceMap[p.sku] = p.price
+  }
+
   let updated = 0
   let failed = 0
-
-  // Phase 1: update prices/thumbnails in parallel batches
-  type PendingSellerName = { id: string; our_sku: string; seller_id: number }
-  const pendingSellerNames: PendingSellerName[] = []
+  const pendingSellerNames: { id: string; our_sku: string; seller_id: number }[] = []
+  const alertsToInsert: AlertInsert[] = []
 
   const BATCH = 10
   for (let i = 0; i < items.length; i += BATCH) {
@@ -58,6 +143,7 @@ export async function POST() {
       try {
         let updateData: Record<string, unknown> | null = null
         let newSellerId: number | null = null
+        let newPrice: number | null = null
 
         if (isCatalogId(item.id, item.permalink)) {
           const productRes = await fetch(`${ML_API}/products/${item.id}`, { headers })
@@ -81,10 +167,12 @@ export async function POST() {
 
           const pictures: Array<{ url?: string }> = productData.pictures ?? []
           newSellerId = best.seller_id
+          newPrice = best.price
 
           updateData = {
             title: productData.name ?? null,
             price: best.price,
+            previous_price: item.price ?? null,
             currency_id: best.currency_id ?? 'UYU',
             condition: best.condition ?? null,
             thumbnail: pictures[0]?.url ?? null,
@@ -100,10 +188,12 @@ export async function POST() {
           if (!data.title) { failed++; return }
 
           newSellerId = data.seller_id ?? null
+          newPrice = data.price ?? null
 
           updateData = {
             title: data.title ?? null,
             price: data.price ?? null,
+            previous_price: item.price ?? null,
             original_price: data.original_price ?? null,
             currency_id: data.currency_id ?? null,
             available_quantity: data.available_quantity ?? null,
@@ -128,7 +218,19 @@ export async function POST() {
         if (updateError) { failed++; return }
         updated++
 
-        // Queue seller name fetch if missing or seller changed
+        // Evaluate alert rules if price changed
+        if (newPrice != null && rules.length > 0) {
+          const fired = evaluateRules(
+            rules,
+            item,
+            item.price ?? null,
+            newPrice,
+            ourPriceMap[item.our_sku] ?? null,
+          )
+          alertsToInsert.push(...fired)
+        }
+
+        // Queue seller name if missing or changed
         if (newSellerId && (!item.seller_name || newSellerId !== Number(item.seller_id))) {
           pendingSellerNames.push({ id: item.id, our_sku: item.our_sku, seller_id: newSellerId })
         }
@@ -138,7 +240,14 @@ export async function POST() {
     }))
   }
 
-  // Phase 2: fetch seller names sequentially to avoid rate limits
+  // Phase 2: insert alerts
+  let alertsFired = 0
+  if (alertsToInsert.length > 0) {
+    const { error: alertError } = await admin.from('ml_price_alerts').insert(alertsToInsert)
+    if (!alertError) alertsFired = alertsToInsert.length
+  }
+
+  // Phase 3: fetch seller names sequentially
   for (const pending of pendingSellerNames) {
     const nickname = await fetchNickname(pending.seller_id, headers)
     if (nickname) {
@@ -150,5 +259,12 @@ export async function POST() {
     }
   }
 
-  return NextResponse.json({ ok: true, updated, failed, total: items.length, seller_names_fetched: pendingSellerNames.length })
+  return NextResponse.json({
+    ok: true,
+    updated,
+    failed,
+    total: items.length,
+    alerts_fired: alertsFired,
+    seller_names_fetched: pendingSellerNames.length,
+  })
 }
