@@ -1,14 +1,8 @@
 'use client'
 
-import { useState } from 'react'
-
-const RULE_LABELS: Record<string, string> = {
-  price_changed: 'Cambio de precio',
-  competitor_cheaper: 'Competidor más barato',
-  competitor_pricier: 'Competidor más caro',
-  price_diff_pct_above: 'Más barato por %',
-  price_diff_pct_below: 'Más caro por %',
-}
+import { useState, useEffect } from 'react'
+import Image from 'next/image'
+import RuleTypeBadge from './RuleTypeBadge'
 
 type AlertItem = {
   id: string
@@ -24,11 +18,45 @@ type AlertItem = {
   ml_competitor_items: { title: string | null; seller_name: string | null; thumbnail: string | null } | null
 }
 
+type Rule = { id: string; name: string }
 type Sku = { sku: string; title: string }
 
-function formatPrice(price: number | null) {
+type PanelData = {
+  product: {
+    id: string
+    title: string
+    sku: string | null
+    price: number | null
+    catalog_price: number | null
+    buybox_price: number | null
+    status: string | null
+    thumbnail: string | null
+    permalink: string | null
+    currency_id: string | null
+    available_quantity: number | null
+    pictures: { secure_url?: string; url?: string }[] | null
+  } | null
+  competitors: {
+    id: string
+    title: string | null
+    price: number | null
+    currency_id: string | null
+    usd_price: number | null
+    thumbnail: string | null
+    permalink: string | null
+    seller_name: string | null
+    status: string | null
+    paused: boolean | null
+  }[]
+}
+
+function formatPrice(price: number | null, currency?: string | null) {
   if (price == null) return '—'
-  return new Intl.NumberFormat('es-UY', { style: 'currency', currency: 'UYU', maximumFractionDigits: 0 }).format(price)
+  return new Intl.NumberFormat('es-UY', {
+    style: 'currency',
+    currency: currency ?? 'UYU',
+    maximumFractionDigits: 0,
+  }).format(price)
 }
 
 function formatDate(dateStr: string) {
@@ -38,25 +66,57 @@ function formatDate(dateStr: string) {
   }).format(new Date(dateStr))
 }
 
+function imgUrl(thumbnail: string | null) {
+  if (!thumbnail) return null
+  return thumbnail.replace('http://', 'https://').replace(/-I\.jpg$/, '-F.jpg')
+}
+
+const STATUS_COLOR: Record<string, string> = {
+  active: 'bg-green-100 text-green-700',
+  paused: 'bg-yellow-100 text-yellow-700',
+  closed: 'bg-gray-100 text-gray-600',
+}
+const STATUS_LABEL: Record<string, string> = {
+  active: 'Activo', paused: 'Pausado', closed: 'Cerrado',
+}
+
 export default function HistorySection({
   initialAlerts,
   skus,
+  rules,
 }: {
   initialAlerts: AlertItem[]
   skus: Sku[]
+  rules: Rule[]
 }) {
   const [alerts, setAlerts] = useState<AlertItem[]>(initialAlerts)
   const [filter, setFilter] = useState<'all' | 'unread'>('unread')
   const [filterSku, setFilterSku] = useState('')
+  const [filterRule, setFilterRule] = useState('')
   const [deletingRead, setDeletingRead] = useState(false)
+  const [panelSku, setPanelSku] = useState<string | null>(null)
+  const [panelData, setPanelData] = useState<PanelData | null>(null)
+  const [panelLoading, setPanelLoading] = useState(false)
+
+  const skuMap = new Map(skus.map(s => [s.sku, s.title]))
 
   const visible = alerts.filter(a => {
     if (filter === 'unread' && a.read_at) return false
     if (filterSku && a.our_sku !== filterSku) return false
+    if (filterRule && a.ml_price_alert_rules?.id !== filterRule) return false
     return true
   })
 
   const unreadCount = alerts.filter(a => !a.read_at).length
+
+  useEffect(() => {
+    if (!panelSku) { setPanelData(null); return }
+    setPanelLoading(true)
+    fetch(`/api/product-panel/${encodeURIComponent(panelSku)}`)
+      .then(r => r.json())
+      .then(data => setPanelData(data))
+      .finally(() => setPanelLoading(false))
+  }, [panelSku])
 
   async function markRead(id: string) {
     setAlerts(prev => prev.map(a => a.id === id ? { ...a, read_at: new Date().toISOString() } : a))
@@ -83,6 +143,29 @@ export default function HistorySection({
     await fetch(`/api/alert-history/${id}`, { method: 'DELETE' })
   }
 
+  // Build sorted price list for panel
+  const panelEntries = (() => {
+    if (!panelData?.product) return []
+    const { price: pubPrice, catalog_price: catPrice, currency_id } = panelData.product
+    type Entry = { key: string; label: string; price: number; isOurs: boolean; usd_price?: number | null; thumbnail?: string | null; permalink?: string | null; seller?: string | null }
+    const entries: Entry[] = []
+    if (pubPrice != null) entries.push({ key: 'our-pub', label: 'Mi precio publicación', price: pubPrice, isOurs: true })
+    if (catPrice != null && catPrice !== pubPrice) entries.push({ key: 'our-cat', label: 'Mi precio catálogo', price: catPrice, isOurs: true })
+    for (const c of panelData.competitors) {
+      if (c.price != null && !c.paused) {
+        entries.push({ key: c.id, label: c.seller_name ?? c.title ?? c.id, price: c.price, isOurs: false, usd_price: c.usd_price, thumbnail: c.thumbnail, permalink: c.permalink, seller: c.seller_name })
+      }
+    }
+    const refPrice = catPrice ?? pubPrice
+    return entries
+      .sort((a, b) => a.price - b.price)
+      .map(e => ({
+        ...e,
+        diff: refPrice && !e.isOurs ? ((e.price - refPrice) / refPrice) * 100 : null,
+        currency: currency_id,
+      }))
+  })()
+
   return (
     <section>
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
@@ -93,11 +176,25 @@ export default function HistorySection({
           )}
         </h2>
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Rule filter */}
+          {rules.length > 0 && (
+            <select
+              value={filterRule}
+              onChange={e => setFilterRule(e.target.value)}
+              className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
+            >
+              <option value="">Todas las reglas</option>
+              {rules.map(r => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
+            </select>
+          )}
+
           {/* SKU filter */}
           <select
             value={filterSku}
             onChange={e => setFilterSku(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
           >
             <option value="">Todos los SKU</option>
             {skus.map(s => (
@@ -151,7 +248,8 @@ export default function HistorySection({
             return (
               <div
                 key={alert.id}
-                className={`bg-white border rounded-xl px-4 py-3 flex items-start gap-4 transition-opacity ${isRead ? 'opacity-60 border-gray-100' : 'border-orange-200'}`}
+                onClick={() => setPanelSku(panelSku === alert.our_sku ? null : alert.our_sku)}
+                className={`bg-white border rounded-xl px-4 py-3 flex items-start gap-4 transition-all cursor-pointer ${isRead ? 'opacity-60 border-gray-100' : 'border-orange-200'} ${panelSku === alert.our_sku ? 'ring-2 ring-blue-400' : 'hover:border-gray-300'}`}
               >
                 {/* Unread dot */}
                 <div className="mt-1.5 shrink-0">
@@ -164,12 +262,15 @@ export default function HistorySection({
                 {/* Content */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between gap-2 flex-wrap">
-                    <div>
-                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                        {alert.ml_price_alert_rules ? RULE_LABELS[alert.ml_price_alert_rules.rule_type] ?? alert.ml_price_alert_rules.rule_type : '—'}
-                      </span>
+                    <div className="flex items-center gap-2 flex-wrap">
                       {alert.ml_price_alert_rules && (
-                        <span className="ml-2 text-xs text-gray-400">"{alert.ml_price_alert_rules.name}"</span>
+                        <RuleTypeBadge
+                          ruleType={alert.ml_price_alert_rules.rule_type}
+                          thresholdPct={alert.diff_pct != null ? Math.abs(alert.diff_pct) : null}
+                        />
+                      )}
+                      {alert.ml_price_alert_rules && (
+                        <span className="text-xs text-gray-400">"{alert.ml_price_alert_rules.name}"</span>
                       )}
                     </div>
                     <span className="text-xs text-gray-400 shrink-0">{formatDate(alert.fired_at)}</span>
@@ -177,16 +278,23 @@ export default function HistorySection({
 
                   <div className="mt-1 flex items-center gap-3 flex-wrap">
                     <span className="font-mono text-xs bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded">{alert.our_sku}</span>
-                    {alert.ml_competitor_items?.seller_name && (
-                      <span className="text-sm font-medium text-gray-900">{alert.ml_competitor_items.seller_name}</span>
-                    )}
-                    {alert.ml_competitor_items?.title && (
-                      <span className="text-xs text-gray-500 line-clamp-1">{alert.ml_competitor_items.title}</span>
+                    {skuMap.get(alert.our_sku) && (
+                      <span className="text-sm font-medium text-gray-900 line-clamp-1">{skuMap.get(alert.our_sku)}</span>
                     )}
                   </div>
+                  {(alert.ml_competitor_items?.seller_name || alert.ml_competitor_items?.title) && (
+                    <div className="mt-0.5 flex items-center gap-2 flex-wrap">
+                      <span className="text-xs text-gray-400">vs.</span>
+                      {alert.ml_competitor_items?.seller_name && (
+                        <span className="text-xs font-medium text-gray-600">{alert.ml_competitor_items.seller_name}</span>
+                      )}
+                      {alert.ml_competitor_items?.title && (
+                        <span className="text-xs text-gray-400 line-clamp-1">{alert.ml_competitor_items.title}</span>
+                      )}
+                    </div>
+                  )}
 
                   <div className="mt-2 flex items-center gap-4 flex-wrap">
-                    {/* Price change */}
                     <div className="flex items-center gap-2 text-sm">
                       {alert.competitor_price_before != null && (
                         <span className="text-gray-400 line-through">{formatPrice(alert.competitor_price_before)}</span>
@@ -196,13 +304,9 @@ export default function HistorySection({
                         {formatPrice(alert.competitor_price_after)}
                       </span>
                     </div>
-
-                    {/* Our price */}
                     {alert.our_price != null && (
                       <span className="text-xs text-gray-400">Nuestro: {formatPrice(alert.our_price)}</span>
                     )}
-
-                    {/* Diff */}
                     {diff != null && (
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${diff < 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'}`}>
                         {diff < 0 ? `${diff.toFixed(1)}%` : `+${diff.toFixed(1)}%`}
@@ -212,7 +316,7 @@ export default function HistorySection({
                 </div>
 
                 {/* Actions */}
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
                   {!isRead && (
                     <button
                       onClick={() => markRead(alert.id)}
@@ -232,6 +336,153 @@ export default function HistorySection({
               </div>
             )
           })}
+        </div>
+      )}
+
+      {/* Product panel — slides in from the right */}
+      {panelSku && (
+        <div className="fixed inset-0 z-40" onClick={() => setPanelSku(null)}>
+          <div
+            className="absolute top-0 right-0 h-full w-full md:w-130 bg-white shadow-2xl flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            {panelLoading || !panelData ? (
+              <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
+                {panelLoading ? 'Cargando...' : 'Sin datos'}
+              </div>
+            ) : (
+              <>
+                {/* Header */}
+                <div className="flex items-start justify-between px-5 py-3 border-b border-gray-100 shrink-0">
+                  <div className="min-w-0 flex-1 pr-3">
+                    <p className="text-xs text-gray-400 mb-0.5 font-mono">{panelSku}</p>
+                    <h2 className="font-semibold text-gray-900 leading-snug line-clamp-2 text-sm">
+                      {panelData.product?.title ?? skuMap.get(panelSku) ?? panelSku}
+                    </h2>
+                  </div>
+                  <button onClick={() => setPanelSku(null)} className="text-gray-400 hover:text-gray-700 text-2xl leading-none shrink-0">×</button>
+                </div>
+
+                {/* Image + key info */}
+                {panelData.product && (
+                  <div className="flex border-b border-gray-100 shrink-0">
+                    <div className="w-36 shrink-0 bg-gray-50 flex items-center justify-center p-3 border-r border-gray-100">
+                      {panelData.product.thumbnail ? (
+                        <Image
+                          src={imgUrl(panelData.product.thumbnail)!}
+                          alt={panelData.product.title}
+                          width={120}
+                          height={120}
+                          className="object-contain"
+                          style={{ width: 'auto', height: 'auto', maxWidth: '100%', maxHeight: '120px' }}
+                          unoptimized
+                        />
+                      ) : (
+                        <div className="w-full h-28 bg-gray-100 rounded" />
+                      )}
+                    </div>
+                    <div className="flex-1 p-4 space-y-2">
+                      <div className="flex gap-3 text-xs">
+                        <div>
+                          <p className="text-gray-400 uppercase tracking-wide font-medium">MLU</p>
+                          <p className="font-mono text-gray-900 font-semibold">{panelData.product.id}</p>
+                        </div>
+                        {panelData.product.sku && (
+                          <div>
+                            <p className="text-gray-400 uppercase tracking-wide font-medium">SKU</p>
+                            <p className="font-mono text-gray-900 font-semibold">{panelData.product.sku}</p>
+                          </div>
+                        )}
+                      </div>
+                      <div className="border-t border-gray-50 pt-2 space-y-1">
+                        {panelData.product.price != null && (
+                          <div className="flex items-baseline justify-between">
+                            <span className="text-xs text-gray-400">Precio pub.</span>
+                            <span className="text-lg font-bold text-gray-900">{formatPrice(panelData.product.price, panelData.product.currency_id)}</span>
+                          </div>
+                        )}
+                        {panelData.product.catalog_price != null && panelData.product.catalog_price !== panelData.product.price && (
+                          <div className="flex items-baseline justify-between">
+                            <span className="text-xs text-gray-400">Mi cat.</span>
+                            <span className="text-base font-semibold text-blue-600">{formatPrice(panelData.product.catalog_price, panelData.product.currency_id)}</span>
+                          </div>
+                        )}
+                        {panelData.product.buybox_price != null && panelData.product.buybox_price !== panelData.product.catalog_price && (
+                          <div className="flex items-baseline justify-between">
+                            <span className="text-xs text-gray-400">Buy-box rival</span>
+                            <span className="text-base font-semibold text-orange-500">{formatPrice(panelData.product.buybox_price, panelData.product.currency_id)}</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between pt-1">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLOR[panelData.product.status ?? ''] ?? 'bg-gray-100 text-gray-600'}`}>
+                          {STATUS_LABEL[panelData.product.status ?? ''] ?? panelData.product.status ?? '—'}
+                        </span>
+                        {panelData.product.permalink && (
+                          <a href={panelData.product.permalink} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 hover:text-blue-700 font-medium">
+                            Ver en ML →
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Price comparison */}
+                <div className="flex-1 overflow-y-auto p-4">
+                  {panelEntries.length === 0 ? (
+                    <p className="text-center text-gray-400 text-sm py-8">Sin datos de precios</p>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-xs text-gray-400 uppercase tracking-wide font-medium mb-3">Comparación de precios</p>
+                      {panelEntries.map((entry, idx) => {
+                        const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : null
+                        const isCheaper = entry.diff != null && entry.diff < 0
+                        return (
+                          <div key={entry.key} className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${entry.isOurs ? 'bg-gray-50 border-gray-300 shadow-sm' : 'bg-white border-gray-100'}`}>
+                            <div className="w-7 text-center shrink-0">
+                              {medal ? <span className="text-xl">{medal}</span> : <span className="text-sm font-bold text-gray-400">{idx + 1}</span>}
+                            </div>
+                            {entry.isOurs ? (
+                              <div className="w-9 h-9 rounded-lg bg-gray-200 flex items-center justify-center shrink-0">
+                                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                              </div>
+                            ) : entry.thumbnail ? (
+                              <Image src={imgUrl(entry.thumbnail)!} alt="" width={36} height={36} className="w-9 h-9 rounded-lg object-contain bg-gray-50 shrink-0" unoptimized />
+                            ) : (
+                              <div className="w-9 h-9 rounded-lg bg-gray-100 shrink-0" />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <p className={`text-sm font-medium line-clamp-1 ${entry.isOurs ? 'text-gray-600' : 'text-gray-900'}`}>{entry.label}</p>
+                              <p className="text-xs text-gray-400">{entry.isOurs ? 'Nuestro — publicación' : entry.seller ?? 'Competidor'}</p>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className="text-base font-bold text-gray-900">{formatPrice(entry.price, entry.currency)}</p>
+                              {!entry.isOurs && entry.usd_price != null && (
+                                <p className="text-xs text-gray-400 mt-0.5">
+                                  USD {entry.usd_price.toLocaleString('es-UY', { maximumFractionDigits: 0 })}
+                                </p>
+                              )}
+                              {entry.diff != null && (
+                                <p className={`text-xs font-semibold mt-0.5 ${isCheaper ? 'text-red-500' : 'text-green-600'}`}>
+                                  {isCheaper ? `${entry.diff.toFixed(0)}%` : `+${entry.diff.toFixed(0)}%`}
+                                </p>
+                              )}
+                            </div>
+                            {entry.permalink && (
+                              <a href={entry.permalink} target="_blank" rel="noopener noreferrer" className="text-gray-300 hover:text-blue-500 transition-colors shrink-0" onClick={e => e.stopPropagation()}>
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                              </a>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
     </section>

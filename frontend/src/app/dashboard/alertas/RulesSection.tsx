@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import RuleTypeBadge from './RuleTypeBadge'
 
 const RULE_LABELS: Record<string, string> = {
   price_changed: 'Cambio de precio',
@@ -24,6 +25,109 @@ type Rule = {
 
 type Sku = { sku: string; title: string }
 
+function RuleForm({
+  title,
+  skus,
+  initial,
+  saving,
+  error,
+  onSubmit,
+  onCancel,
+}: {
+  title: string
+  skus: Sku[]
+  initial: { name: string; ruleType: string; sku: string; threshold: string }
+  saving: boolean
+  error: string | null
+  onSubmit: (values: { name: string; ruleType: string; sku: string; threshold: string }) => void
+  onCancel: () => void
+}) {
+  const [name, setName] = useState(initial.name)
+  const [ruleType, setRuleType] = useState(initial.ruleType)
+  const [selectedSku, setSelectedSku] = useState(initial.sku)
+  const [threshold, setThreshold] = useState(initial.threshold)
+  const needsThreshold = ['price_diff_pct_above', 'price_diff_pct_below'].includes(ruleType)
+
+  return (
+    <form
+      onSubmit={e => { e.preventDefault(); onSubmit({ name, ruleType, sku: selectedSku, threshold }) }}
+      className="bg-white border border-blue-200 rounded-xl p-5 mb-4 space-y-4"
+    >
+      <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="col-span-2 sm:col-span-1">
+          <label className="block text-xs text-gray-500 mb-1">Nombre</label>
+          <input
+            value={name}
+            onChange={e => setName(e.target.value)}
+            required
+            placeholder="Ej: Competidor más barato"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Tipo de regla</label>
+          <select
+            value={ruleType}
+            onChange={e => setRuleType(e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          >
+            {Object.entries(RULE_LABELS).map(([v, l]) => (
+              <option key={v} value={v}>{l}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">SKU (opcional — vacío = global)</label>
+          <select
+            value={selectedSku}
+            onChange={e => setSelectedSku(e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          >
+            <option value="">Todos los productos</option>
+            {skus.map(s => (
+              <option key={s.sku} value={s.sku}>{s.sku} — {s.title}</option>
+            ))}
+          </select>
+        </div>
+        {needsThreshold && (
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Umbral (%)</label>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={0.1}
+              value={threshold}
+              onChange={e => setThreshold(e.target.value)}
+              required
+              placeholder="Ej: 5"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+          </div>
+        )}
+      </div>
+      {error && <p className="text-xs text-red-500">{error}</p>}
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={saving}
+          className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+        >
+          {saving ? 'Guardando...' : 'Guardar'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="px-4 py-2 text-sm text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+        >
+          Cancelar
+        </button>
+      </div>
+    </form>
+  )
+}
+
 export default function RulesSection({
   initialRules,
   skus,
@@ -33,49 +137,71 @@ export default function RulesSection({
 }) {
   const router = useRouter()
   const [rules, setRules] = useState<Rule[]>(initialRules)
-  const [showForm, setShowForm] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [formError, setFormError] = useState<string | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
 
-  const [name, setName] = useState('')
-  const [ruleType, setRuleType] = useState('competitor_cheaper')
-  const [selectedSku, setSelectedSku] = useState('')
-  const [threshold, setThreshold] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editSaving, setEditSaving] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
 
-  const needsThreshold = ['price_diff_pct_above', 'price_diff_pct_below'].includes(ruleType)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
-  function resetForm() {
-    setName('')
-    setRuleType('competitor_cheaper')
-    setSelectedSku('')
-    setThreshold('')
-    setFormError(null)
-    setShowForm(false)
-  }
-
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault()
-    setSaving(true)
-    setFormError(null)
+  async function handleCreate(values: { name: string; ruleType: string; sku: string; threshold: string }) {
+    setCreating(true)
+    setCreateError(null)
+    const needsThreshold = ['price_diff_pct_above', 'price_diff_pct_below'].includes(values.ruleType)
     try {
       const res = await fetch('/api/alert-rules', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name,
-          rule_type: ruleType,
-          sku: selectedSku || null,
-          threshold_pct: needsThreshold ? Number(threshold) : null,
+          name: values.name,
+          rule_type: values.ruleType,
+          sku: values.sku || null,
+          threshold_pct: needsThreshold ? Number(values.threshold) : null,
         }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setRules(prev => [{ ...data, ml_price_alerts: [] }, ...prev])
-      resetForm()
+      setShowCreate(false)
     } catch (e) {
-      setFormError(e instanceof Error ? e.message : 'Error')
+      setCreateError(e instanceof Error ? e.message : 'Error')
     } finally {
-      setSaving(false)
+      setCreating(false)
+    }
+  }
+
+  async function handleEdit(id: string, values: { name: string; ruleType: string; sku: string; threshold: string }) {
+    setEditSaving(true)
+    setEditError(null)
+    const needsThreshold = ['price_diff_pct_above', 'price_diff_pct_below'].includes(values.ruleType)
+    try {
+      const res = await fetch(`/api/alert-rules/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: values.name,
+          rule_type: values.ruleType,
+          sku: values.sku || null,
+          threshold_pct: needsThreshold ? Number(values.threshold) : null,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      setRules(prev => prev.map(r => r.id === id ? {
+        ...r,
+        name: values.name,
+        rule_type: values.ruleType,
+        sku: values.sku || null,
+        threshold_pct: needsThreshold ? Number(values.threshold) : null,
+      } : r))
+      setEditingId(null)
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : 'Error')
+    } finally {
+      setEditSaving(false)
     }
   }
 
@@ -91,8 +217,8 @@ export default function RulesSection({
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('¿Eliminar esta regla y todo su historial?')) return
     setRules(prev => prev.filter(r => r.id !== id))
+    setConfirmDeleteId(null)
     await fetch(`/api/alert-rules/${id}`, { method: 'DELETE' })
     router.refresh()
   }
@@ -101,9 +227,9 @@ export default function RulesSection({
     <section>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-gray-900">Reglas</h2>
-        {!showForm && (
+        {!showCreate && !editingId && (
           <button
-            onClick={() => setShowForm(true)}
+            onClick={() => setShowCreate(true)}
             className="flex items-center gap-1.5 text-sm font-medium bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 transition-colors"
           >
             <span className="text-base leading-none">+</span> Nueva regla
@@ -111,146 +237,126 @@ export default function RulesSection({
         )}
       </div>
 
-      {/* Create form */}
-      {showForm && (
-        <form onSubmit={handleCreate} className="bg-white border border-blue-200 rounded-xl p-5 mb-4 space-y-4">
-          <h3 className="text-sm font-semibold text-gray-900">Nueva regla de alerta</h3>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2 sm:col-span-1">
-              <label className="block text-xs text-gray-500 mb-1">Nombre</label>
-              <input
-                value={name}
-                onChange={e => setName(e.target.value)}
-                required
-                placeholder="Ej: Competidor más barato"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Tipo de regla</label>
-              <select
-                value={ruleType}
-                onChange={e => setRuleType(e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-              >
-                {Object.entries(RULE_LABELS).map(([v, l]) => (
-                  <option key={v} value={v}>{l}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">SKU (opcional — vacío = global)</label>
-              <select
-                value={selectedSku}
-                onChange={e => setSelectedSku(e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-              >
-                <option value="">Todos los productos</option>
-                {skus.map(s => (
-                  <option key={s.sku} value={s.sku}>{s.sku} — {s.title}</option>
-                ))}
-              </select>
-            </div>
-            {needsThreshold && (
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">Umbral (%)</label>
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={0.1}
-                  value={threshold}
-                  onChange={e => setThreshold(e.target.value)}
-                  required
-                  placeholder="Ej: 5"
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
-              </div>
-            )}
-          </div>
-          {formError && <p className="text-xs text-red-500">{formError}</p>}
-          <div className="flex gap-2">
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-            >
-              {saving ? 'Guardando...' : 'Guardar regla'}
-            </button>
-            <button type="button" onClick={resetForm} className="px-4 py-2 text-sm text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
-              Cancelar
-            </button>
-          </div>
-        </form>
+      {showCreate && (
+        <RuleForm
+          title="Nueva regla de alerta"
+          skus={skus}
+          initial={{ name: '', ruleType: 'competitor_cheaper', sku: '', threshold: '' }}
+          saving={creating}
+          error={createError}
+          onSubmit={handleCreate}
+          onCancel={() => { setShowCreate(false); setCreateError(null) }}
+        />
       )}
 
-      {/* Rules list */}
       {rules.length === 0 ? (
         <div className="bg-white border border-gray-100 rounded-xl p-8 text-center text-gray-400 text-sm">
           No hay reglas configuradas. Creá una para empezar a recibir alertas.
         </div>
       ) : (
-        <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100 text-xs text-gray-400 uppercase tracking-wide">
-                <th className="text-left px-4 py-3 font-medium">Nombre</th>
-                <th className="text-left px-4 py-3 font-medium">Tipo</th>
-                <th className="text-left px-4 py-3 font-medium">SKU</th>
-                <th className="text-left px-4 py-3 font-medium">Umbral</th>
-                <th className="text-right px-4 py-3 font-medium">Disparos</th>
-                <th className="text-center px-4 py-3 font-medium">Activa</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {rules.map((rule, i) => {
-                const count = Array.isArray(rule.ml_price_alerts) && rule.ml_price_alerts[0]
-                  ? (rule.ml_price_alerts[0] as { count: number }).count
-                  : 0
-                return (
-                  <tr key={rule.id} className={`border-b border-gray-50 last:border-0 ${!rule.enabled ? 'opacity-50' : ''}`}>
-                    <td className="px-4 py-3 font-medium text-gray-900">{rule.name}</td>
-                    <td className="px-4 py-3 text-gray-600">{RULE_LABELS[rule.rule_type] ?? rule.rule_type}</td>
-                    <td className="px-4 py-3">
-                      {rule.sku ? (
-                        <span className="font-mono text-xs bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded">{rule.sku}</span>
-                      ) : (
-                        <span className="text-gray-400 text-xs">Global</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-gray-500">
-                      {rule.threshold_pct != null ? `${rule.threshold_pct}%` : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {count > 0 ? (
-                        <span className="bg-orange-100 text-orange-700 text-xs font-semibold px-2 py-0.5 rounded-full">{count}</span>
-                      ) : (
-                        <span className="text-gray-300">0</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <button
-                        onClick={() => handleToggle(rule)}
-                        className={`relative inline-flex h-5 w-9 rounded-full transition-colors ${rule.enabled ? 'bg-blue-600' : 'bg-gray-200'}`}
-                      >
-                        <span className={`inline-block h-4 w-4 mt-0.5 rounded-full bg-white shadow transition-transform ${rule.enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                      </button>
-                    </td>
-                    <td className="px-4 py-3 text-right">
+        <div className="bg-white border border-gray-100 rounded-xl overflow-hidden divide-y divide-gray-50">
+          {rules.map(rule => {
+            const count = Array.isArray(rule.ml_price_alerts) && rule.ml_price_alerts[0]
+              ? (rule.ml_price_alerts[0] as { count: number }).count
+              : 0
+            const isEditing = editingId === rule.id
+            const isConfirmingDelete = confirmDeleteId === rule.id
+
+            return (
+              <div key={rule.id} className={!rule.enabled ? 'opacity-50' : ''}>
+                {/* Rule row */}
+                <div className="flex items-center gap-3 px-4 py-3 flex-wrap">
+                  {/* Type badge + name */}
+                  <div className="flex-1 min-w-0 flex items-center gap-3 flex-wrap">
+                    <RuleTypeBadge ruleType={rule.rule_type} thresholdPct={rule.threshold_pct} />
+                    <span className="text-sm font-medium text-gray-900">{rule.name}</span>
+                    {rule.sku ? (
+                      <span className="font-mono text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{rule.sku}</span>
+                    ) : (
+                      <span className="text-xs text-gray-400">Global</span>
+                    )}
+                  </div>
+
+                  {/* Fires count */}
+                  <div className="shrink-0">
+                    {count > 0 ? (
+                      <span className="bg-orange-100 text-orange-700 text-xs font-semibold px-2 py-0.5 rounded-full">{count} disparos</span>
+                    ) : (
+                      <span className="text-xs text-gray-300">0 disparos</span>
+                    )}
+                  </div>
+
+                  {/* Toggle */}
+                  <button
+                    onClick={() => handleToggle(rule)}
+                    className={`relative inline-flex h-5 w-9 rounded-full transition-colors shrink-0 ${rule.enabled ? 'bg-blue-600' : 'bg-gray-200'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 mt-0.5 rounded-full bg-white shadow transition-transform ${rule.enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                  </button>
+
+                  {/* Actions */}
+                  {isConfirmingDelete ? (
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs text-gray-500">¿Eliminar?</span>
                       <button
                         onClick={() => handleDelete(rule.id)}
-                        className="text-gray-300 hover:text-red-500 transition-colors text-lg leading-none"
+                        className="text-xs font-medium text-white bg-red-500 hover:bg-red-600 px-2 py-1 rounded-lg transition-colors"
+                      >
+                        Sí, eliminar
+                      </button>
+                      <button
+                        onClick={() => setConfirmDeleteId(null)}
+                        className="text-xs font-medium text-gray-500 border border-gray-200 hover:bg-gray-50 px-2 py-1 rounded-lg transition-colors"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => { setEditingId(isEditing ? null : rule.id); setEditError(null) }}
+                        className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                        title="Editar regla"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => setConfirmDeleteId(rule.id)}
+                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
                         title="Eliminar regla"
                       >
-                        ×
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
                       </button>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* Edit form */}
+                {isEditing && (
+                  <div className="px-4 pb-4">
+                    <RuleForm
+                      title="Editar regla"
+                      skus={skus}
+                      initial={{
+                        name: rule.name,
+                        ruleType: rule.rule_type,
+                        sku: rule.sku ?? '',
+                        threshold: rule.threshold_pct?.toString() ?? '',
+                      }}
+                      saving={editSaving}
+                      error={editError}
+                      onSubmit={values => handleEdit(rule.id, values)}
+                      onCancel={() => { setEditingId(null); setEditError(null) }}
+                    />
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </section>

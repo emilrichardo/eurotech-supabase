@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { fetchUsdToUyu, convertUsdToUyu } from '@/lib/exchange-rate'
 
 const ML_API = 'https://api.mercadolibre.com'
 
@@ -186,6 +187,16 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // Convert USD → UYU if needed
+  let usdPrice: number | null = null
+  if (mlData.currency_id === 'USD' && typeof mlData.price === 'number') {
+    const rate = await fetchUsdToUyu()
+    if (rate) {
+      usdPrice = mlData.price
+      mlData = { ...mlData, price: convertUsdToUyu(mlData.price, rate), currency_id: 'UYU' }
+    }
+  }
+
   // Check for duplicate
   const { data: existing } = await admin
     .from('ml_competitor_items')
@@ -216,6 +227,7 @@ export async function POST(req: NextRequest) {
     seller_id: (mlData.seller_id as number) ?? null,
     seller_name: (mlData.seller_name as string) ?? null,
     health: (mlData.health as number) ?? null,
+    usd_price: usdPrice,
     synced_at: new Date().toISOString(),
   }
 

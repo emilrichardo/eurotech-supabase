@@ -140,6 +140,7 @@ type Competitor = {
   title: string | null
   price: number | null
   currency_id: string | null
+  usd_price: number | null
   status: string | null
   thumbnail: string | null
   permalink: string | null
@@ -538,8 +539,8 @@ export default function ProductsTable({
                         {STATUS_LABEL[p.status ?? ''] ?? p.status ?? '—'}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-xs whitespace-nowrap">
-                      <span className={isStale(p.last_updated) ? 'text-amber-500 font-medium' : 'text-gray-400'}>
+                    <td className="px-4 py-3 text-xs whitespace-nowrap" suppressHydrationWarning>
+                      <span className={isStale(p.last_updated) ? 'text-amber-500 font-medium' : 'text-gray-400'} suppressHydrationWarning>
                         {formatRelative(p.last_updated)}
                       </span>
                     </td>
@@ -584,7 +585,7 @@ export default function ProductsTable({
                     <p className="text-xs text-red-500 font-medium">buy-box: {formatPrice(p.buybox_price, p.currency_id)}</p>
                   )}
                   <p className="text-xs text-gray-400 mt-0.5">Stock: {p.available_quantity ?? '—'}</p>
-                  <p className={`text-xs mt-0.5 ${isStale(p.last_updated) ? 'text-amber-500 font-medium' : 'text-gray-400'}`}>
+                  <p className={`text-xs mt-0.5 ${isStale(p.last_updated) ? 'text-amber-500 font-medium' : 'text-gray-400'}`} suppressHydrationWarning>
                     {formatRelative(p.last_updated)}
                   </p>
                 </div>
@@ -645,7 +646,7 @@ export default function ProductsTable({
                       {STATUS_LABEL[p.status ?? ''] ?? p.status ?? '—'}
                     </span>
                   </div>
-                  <p className={`text-xs mt-1 ${isStale(p.last_updated) ? 'text-amber-500 font-medium' : 'text-gray-400'}`}>
+                  <p className={`text-xs mt-1 ${isStale(p.last_updated) ? 'text-amber-500 font-medium' : 'text-gray-400'}`} suppressHydrationWarning>
                     {formatRelative(p.last_updated)}
                   </p>
                 </div>
@@ -924,6 +925,11 @@ export default function ProductsTable({
                                   <p className={`text-base font-bold ${entry.isOurs && entry.oursType === 'cat' ? 'text-blue-700' : isPaused ? 'text-gray-400' : 'text-gray-900'}`}>
                                     {formatPrice(entry.price, selected?.currency_id ?? null)}
                                   </p>
+                                  {!entry.isOurs && entry.comp?.usd_price != null && (
+                                    <p className="text-xs text-gray-400 mt-0.5">
+                                      USD {entry.comp.usd_price.toLocaleString('es-UY', { maximumFractionDigits: 0 })}
+                                    </p>
+                                  )}
                                   {!isPaused && diff != null && (
                                     <p className={`text-xs font-semibold mt-0.5 ${isCheaper ? 'text-red-500' : 'text-green-600'}`}>
                                       {isCheaper ? `${diff.toFixed(0)}%` : `+${diff.toFixed(0)}%`}

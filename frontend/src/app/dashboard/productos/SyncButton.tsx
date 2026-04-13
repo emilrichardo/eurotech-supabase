@@ -18,7 +18,12 @@ export default function SyncButton() {
       const comp = await competitorsRes.json()
 
       if (competitorsRes.ok) {
-        setMsg(`Rivales: ${comp.updated ?? 0}/${comp.total ?? 0} · Catálogo actualizándose...`)
+        const alertPart = comp.alert_error
+          ? ` · ⚠ alertas: ${comp.alert_error}`
+          : comp.alerts_fired > 0
+            ? ` · ${comp.alerts_fired} alerta(s)`
+            : ''
+        setMsg(`Rivales: ${comp.updated ?? 0}/${comp.total ?? 0}${alertPart} · Catálogo actualizándose...`)
         setState('done')
         setTimeout(() => window.location.reload(), 1500)
       } else {

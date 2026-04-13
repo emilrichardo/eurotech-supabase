@@ -32,11 +32,19 @@ export default async function AlertasPage() {
       .order('sku'),
   ])
 
+  if (rulesRes.error) console.error('[alertas] rules error:', rulesRes.error.message)
+  if (alertsRes.error) console.error('[alertas] alerts error:', alertsRes.error.message, alertsRes.error)
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rules = (rulesRes.data ?? []) as any[]
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const alerts = (alertsRes.data ?? []) as any[]
-  const skus = (skusRes.data ?? []).map(p => ({ sku: p.sku as string, title: p.title }))
+  console.log(`[alertas] rules=${rules.length} alerts=${alerts.length}`)
+  const skus = Array.from(
+    new Map(
+      (skusRes.data ?? []).map(p => [p.sku, { sku: p.sku as string, title: p.title }])
+    ).values()
+  )
 
   const unreadCount = alerts.filter(a => !a.read_at).length
 
@@ -57,7 +65,7 @@ export default async function AlertasPage() {
       </div>
 
       <RulesSection initialRules={rules} skus={skus} />
-      <HistorySection initialAlerts={alerts} skus={skus} />
+      <HistorySection initialAlerts={alerts} skus={skus} rules={rules.map((r: { id: string; name: string }) => ({ id: r.id, name: r.name }))} />
     </div>
   )
 }

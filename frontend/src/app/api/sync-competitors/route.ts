@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { fetchUsdToUyu, convertUsdToUyu } from '@/lib/exchange-rate'
 
 const ML_API = 'https://api.mercadolibre.com'
 
@@ -42,8 +43,9 @@ function evaluateRules(
   priceAfter: number | null,
   ourPrice: number | null,
 ): AlertInsert[] {
-  if (priceBefore == null || priceAfter == null) return []
-  if (priceBefore === priceAfter) return []
+  if (priceAfter == null) return []
+
+  const priceChanged = priceBefore !== priceAfter
 
   const diffPct = ourPrice != null && ourPrice > 0
     ? ((ourPrice - priceAfter) / ourPrice) * 100
@@ -58,12 +60,15 @@ function evaluateRules(
     let fires = false
     switch (rule.rule_type) {
       case 'price_changed':
-        fires = true
+        // Only fire when price actually changed
+        fires = priceChanged && priceBefore != null
         break
       case 'competitor_cheaper':
+        // Fire whenever competitor is cheaper, regardless of price change
         fires = ourPrice != null && priceAfter < ourPrice
         break
       case 'competitor_pricier':
+        // Fire whenever competitor is more expensive, regardless of price change
         fires = ourPrice != null && priceAfter > ourPrice
         break
       case 'price_diff_pct_above':
@@ -94,6 +99,8 @@ function evaluateRules(
 
 export async function POST() {
   const admin = createAdminClient()
+  // Fetch exchange rate once for the whole sync run
+  const usdRate = await fetchUsdToUyu()
 
   const { data: tokenRow } = await admin
     .from('ml_tokens')
@@ -126,10 +133,14 @@ export async function POST() {
   ])
 
   const rules: Rule[] = rulesRes.data ?? []
-  const ourPriceMap: Record<string, number | null> = {}
+  // Use first non-null price per SKU (multiple rows can share same SKU)
+  const ourPriceMap: Record<string, number> = {}
   for (const p of productsRes.data ?? []) {
-    if (p.sku) ourPriceMap[p.sku] = p.price
+    if (p.sku && p.price != null && !(p.sku in ourPriceMap)) {
+      ourPriceMap[p.sku] = p.price
+    }
   }
+  console.log(`[sync-competitors] rules=${rules.length} skus_with_price=${Object.keys(ourPriceMap).length}`)
 
   let updated = 0
   let failed = 0
@@ -150,13 +161,19 @@ export async function POST() {
           const productData = productRes.ok ? await productRes.json() : {}
 
           const itemsRes = await fetch(`${ML_API}/products/${item.id}/items?limit=20`, { headers })
-          if (!itemsRes.ok) { failed++; return }
+          if (!itemsRes.ok) {
+            console.error(`[sync-competitors] catalog fetch failed id=${item.id} status=${itemsRes.status}`)
+            failed++; return
+          }
 
           const itemsData = await itemsRes.json()
           const results: Array<{ seller_id: number; price: number; currency_id: string; condition: string }> =
             itemsData.results ?? []
 
-          if (results.length === 0) { failed++; return }
+          if (results.length === 0) {
+            console.warn(`[sync-competitors] catalog no results id=${item.id}`)
+            failed++; return
+          }
 
           const competitors = ourSellerId
             ? results.filter(r => r.seller_id !== ourSellerId)
@@ -167,13 +184,22 @@ export async function POST() {
 
           const pictures: Array<{ url?: string }> = productData.pictures ?? []
           newSellerId = best.seller_id
-          newPrice = best.price
+
+          // Convert USD → UYU if needed
+          let catalogPrice = best.price
+          let catalogUsdPrice: number | null = null
+          if ((best.currency_id ?? 'UYU') === 'USD' && usdRate) {
+            catalogUsdPrice = catalogPrice
+            catalogPrice = convertUsdToUyu(catalogPrice, usdRate)
+          }
+          newPrice = catalogPrice
 
           updateData = {
             title: productData.name ?? null,
-            price: best.price,
+            price: catalogPrice,
             previous_price: item.price ?? null,
-            currency_id: best.currency_id ?? 'UYU',
+            currency_id: 'UYU',
+            usd_price: catalogUsdPrice,
             condition: best.condition ?? null,
             thumbnail: pictures[0]?.url ?? null,
             seller_id: best.seller_id,
@@ -188,14 +214,23 @@ export async function POST() {
           if (!data.title) { failed++; return }
 
           newSellerId = data.seller_id ?? null
-          newPrice = data.price ?? null
+
+          // Convert USD → UYU if needed
+          let itemPrice = data.price ?? null
+          let itemUsdPrice: number | null = null
+          if (data.currency_id === 'USD' && itemPrice != null && usdRate) {
+            itemUsdPrice = itemPrice
+            itemPrice = convertUsdToUyu(itemPrice, usdRate)
+          }
+          newPrice = itemPrice
 
           updateData = {
             title: data.title ?? null,
-            price: data.price ?? null,
+            price: itemPrice,
             previous_price: item.price ?? null,
             original_price: data.original_price ?? null,
-            currency_id: data.currency_id ?? null,
+            currency_id: data.currency_id === 'USD' ? 'UYU' : (data.currency_id ?? null),
+            usd_price: itemUsdPrice,
             available_quantity: data.available_quantity ?? null,
             sold_quantity: data.sold_quantity ?? null,
             status: data.status ?? null,
@@ -208,6 +243,8 @@ export async function POST() {
         }
 
         if (!updateData) { failed++; return }
+
+        console.log(`[sync-competitors] item=${item.id} sku=${item.our_sku} prevPrice=${item.price} newPrice=${newPrice} ourPrice=${ourPriceMap[item.our_sku] ?? 'NOT_FOUND'}`)
 
         const { error: updateError } = await admin
           .from('ml_competitor_items')
@@ -242,9 +279,17 @@ export async function POST() {
 
   // Phase 2: insert alerts
   let alertsFired = 0
+  let alertError: string | null = null
+  console.log(`[sync-competitors] alerts_to_insert=${alertsToInsert.length}`)
   if (alertsToInsert.length > 0) {
-    const { error: alertError } = await admin.from('ml_price_alerts').insert(alertsToInsert)
-    if (!alertError) alertsFired = alertsToInsert.length
+    console.log('[sync-competitors] alerts:', JSON.stringify(alertsToInsert))
+    const { error } = await admin.from('ml_price_alerts').insert(alertsToInsert)
+    if (error) {
+      alertError = error.message
+      console.error('[sync-competitors] alert insert error:', error.message)
+    } else {
+      alertsFired = alertsToInsert.length
+    }
   }
 
   // Phase 3: fetch seller names sequentially
@@ -265,6 +310,7 @@ export async function POST() {
     failed,
     total: items.length,
     alerts_fired: alertsFired,
+    alert_error: alertError,
     seller_names_fetched: pendingSellerNames.length,
   })
 }

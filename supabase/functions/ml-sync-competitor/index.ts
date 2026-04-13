@@ -204,12 +204,15 @@ function evaluateRule(
 
   switch (rule.rule_type) {
     case "price_changed":
+      // Only fire when price actually changed
       return priceBefore !== null && priceBefore !== priceAfter;
 
     case "competitor_cheaper":
+      // Fire whenever competitor is cheaper, regardless of price change
       return ourPrice !== null && priceAfter < ourPrice;
 
     case "competitor_pricier":
+      // Fire whenever competitor is more expensive, regardless of price change
       return ourPrice !== null && priceAfter > ourPrice;
 
     case "price_diff_pct_above": {
