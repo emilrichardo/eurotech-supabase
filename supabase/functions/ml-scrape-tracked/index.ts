@@ -128,6 +128,7 @@ Deno.serve(async (req) => {
         // Store snapshot if first time or something changed
         const changed = !latest ||
           latest.price !== body.price ||
+          (latest as unknown as { original_price: number | null }).original_price !== (body.original_price ?? null) ||
           latest.available_quantity !== body.available_quantity ||
           latest.sold_quantity !== body.sold_quantity ||
           latest.status !== body.status;

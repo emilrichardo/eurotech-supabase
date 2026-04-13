@@ -107,7 +107,10 @@ export default function HistorySection({
     if (filterSku && a.our_sku !== filterSku) return false
     if (filterRule && a.ml_price_alert_rules?.id !== filterRule) return false
     // Ocultar alertas donde el precio catálogo propio ya es más barato que el competidor
-    if (filterCatalogCheaper && a.catalog_price != null && a.competitor_price_after != null && a.catalog_price <= a.competitor_price_after) return false
+    // Solo aplica a reglas donde el competidor es más barato que nosotros
+    const ruleType = a.ml_price_alert_rules?.rule_type ?? ''
+    const isCompetitorCheaperRule = ruleType === 'competitor_cheaper' || ruleType === 'price_diff_pct_above' || ruleType === 'price_changed' || ruleType === ''
+    if (filterCatalogCheaper && isCompetitorCheaperRule && a.catalog_price != null && a.competitor_price_after != null && a.catalog_price <= a.competitor_price_after) return false
     return true
   })
 
@@ -253,24 +256,64 @@ export default function HistorySection({
           </p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {visible.map(alert => {
             const isRead = !!alert.read_at
             const priceWentDown = alert.competitor_price_after != null && alert.competitor_price_before != null
               && alert.competitor_price_after < alert.competitor_price_before
             const diff = alert.diff_pct
             const isActive = panelSku === alert.our_sku
-            const isCheaper = alert.ml_price_alert_rules?.rule_type === 'competitor_cheaper' || alert.ml_price_alert_rules?.rule_type === 'price_diff_pct_above'
+            const ruleType = alert.ml_price_alert_rules?.rule_type ?? ''
+            const isCheaper = ruleType === 'competitor_cheaper' || ruleType === 'price_diff_pct_above'
+            const isPricier = ruleType === 'competitor_pricier' || ruleType === 'price_diff_pct_below'
+
+            // Icon + colors per alert type
+            const alertIcon = (() => {
+              if (isCheaper) return (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m0 0l-5-5m5 5l5-5" />
+                </svg>
+              )
+              if (isPricier) return (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 20V4m0 0l-5 5m5-5l5 5" />
+                </svg>
+              )
+              return (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4" />
+                </svg>
+              )
+            })()
+
+            const iconClasses = isRead
+              ? 'bg-gray-100 text-gray-400'
+              : isCheaper
+                ? 'bg-red-100 text-red-500'
+                : isPricier
+                  ? 'bg-blue-100 text-blue-500'
+                  : 'bg-amber-100 text-amber-500'
+
+            const cardClasses = isRead
+              ? 'opacity-60 border-gray-100'
+              : isCheaper
+                ? 'border-red-200 bg-red-50/30'
+                : isPricier
+                  ? 'border-blue-200 bg-blue-50/20'
+                  : 'border-amber-200 bg-amber-50/20'
 
             return (
               <div
                 key={alert.id}
                 onClick={() => setPanelSku(isActive ? null : alert.our_sku)}
-                className={`bg-white border rounded-xl px-4 py-3 flex items-start gap-3 transition-all cursor-pointer ${isRead ? 'opacity-60 border-gray-100' : isCheaper ? 'border-amber-300 bg-amber-50/40' : 'border-gray-200'} ${isActive ? 'ring-2 ring-blue-400' : 'hover:border-gray-300'}`}
+                className={`bg-white border rounded-xl px-5 py-4 flex items-start gap-4 transition-all cursor-pointer ${cardClasses} ${isActive ? 'ring-2 ring-blue-400' : 'hover:border-gray-300 hover:shadow-sm'}`}
               >
-                <div className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${isRead ? 'bg-gray-200' : isCheaper ? 'bg-amber-400' : 'bg-blue-400'}`} />
+                {/* Type icon */}
+                <div className={`mt-0.5 w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${iconClasses}`}>
+                  {alertIcon}
+                </div>
 
-                <div className="flex-1 min-w-0 space-y-1">
+                <div className="flex-1 min-w-0 space-y-2">
                   {/* Product */}
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-mono text-xs bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded">{alert.our_sku}</span>
@@ -301,21 +344,21 @@ export default function HistorySection({
                   </div>
 
                   {/* Prices */}
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <div className="flex items-center gap-1.5 text-sm">
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <div className="flex items-center gap-2">
                       {alert.competitor_price_before != null && (
-                        <span className="text-gray-400 line-through text-xs">{formatPrice(alert.competitor_price_before)}</span>
+                        <span className="text-gray-400 line-through text-sm">{formatPrice(alert.competitor_price_before)}</span>
                       )}
                       <span className="text-gray-300 text-xs">→</span>
-                      <span className={`font-bold ${priceWentDown ? 'text-red-600' : 'text-green-600'}`}>
+                      <span className={`text-base font-bold ${priceWentDown ? 'text-red-600' : 'text-green-600'}`}>
                         {formatPrice(alert.competitor_price_after)}
                       </span>
                     </div>
                     {alert.our_price != null && (
-                      <span className="text-xs text-gray-400">Nuestro: {formatPrice(alert.our_price)}</span>
+                      <span className="text-sm text-gray-500">Nuestro: <span className="font-medium text-gray-700">{formatPrice(alert.our_price)}</span></span>
                     )}
                     {diff != null && (
-                      <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${diff < 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'}`}>
+                      <span className={`text-sm font-semibold px-2 py-0.5 rounded-full ${diff < 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'}`}>
                         {diff < 0 ? `${diff.toFixed(1)}%` : `+${diff.toFixed(1)}%`}
                       </span>
                     )}
@@ -323,7 +366,7 @@ export default function HistorySection({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center gap-2 shrink-0 pt-0.5" onClick={e => e.stopPropagation()}>
                   {!isRead && (
                     <button
                       onClick={() => markRead(alert.id)}
@@ -334,7 +377,7 @@ export default function HistorySection({
                   )}
                   <button
                     onClick={() => deleteAlert(alert.id)}
-                    className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none"
+                    className="text-gray-300 hover:text-red-400 transition-colors text-xl leading-none"
                     title="Eliminar"
                   >×</button>
                 </div>

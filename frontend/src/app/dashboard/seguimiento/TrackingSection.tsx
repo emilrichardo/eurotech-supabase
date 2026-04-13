@@ -8,6 +8,7 @@ type Snapshot = {
   tracked_item_id: string
   price: number | null
   original_price: number | null
+  sale_price: number | null
   available_quantity: number | null
   sold_quantity: number | null
   status: string | null
@@ -38,6 +39,12 @@ type Sku = {
   price: number | null
   catalog_price: number | null
   currency_id: string | null
+}
+
+// Effective price = sale_price (ML campaign deal) > price (regular/seller discount)
+function effectivePrice(snap: Pick<Snapshot, 'price' | 'sale_price'> | null | undefined): number | null {
+  if (!snap) return null
+  return snap.sale_price ?? snap.price
 }
 
 function formatPrice(p: number | null) {
@@ -105,7 +112,7 @@ function ProductPickerModal({ skus, selected, onSelect, onClose }: {
   )
 
   return (
-    <div className="fixed inset-0 z-60 flex items-center justify-center">
+    <div className="fixed inset-0 z-60 flex items-center justify-center" onClick={e => e.stopPropagation()}>
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
       <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 flex flex-col max-h-[80vh]">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
@@ -196,7 +203,7 @@ function AddModal({ skus, onClose, onAdded }: {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
-      onAdded({ ...data.item, latest_snapshot: null, prev_snapshot: null })
+      onAdded(data.item)
       onClose()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error')
@@ -308,7 +315,7 @@ function HistoryPanel({ item, onClose, skus }: { item: TrackedItem; onClose: () 
     setSavingLink(false)
   }
 
-  const skuMap = new Map(skus.map(s => [s.sku, s.title]))
+  const skuMap = new Map(skus.map(s => [s.sku, s]))
 
   return (
     <div className="fixed inset-0 z-40" onClick={onClose}>
@@ -349,6 +356,7 @@ function HistoryPanel({ item, onClose, skus }: { item: TrackedItem; onClose: () 
               {linkSku && skuMap.get(linkSku) ? (() => {
                 const p = skuMap.get(linkSku)!
                 const thumb = p.thumbnail ? p.thumbnail.replace('http://', 'https://').replace(/-I\.jpg$/, '-F.jpg') : null
+                const price = p.catalog_price ?? p.price
                 return (
                   <>
                     {thumb ? (
@@ -360,6 +368,11 @@ function HistoryPanel({ item, onClose, skus }: { item: TrackedItem; onClose: () 
                       <p className="text-xs font-medium text-gray-900 line-clamp-1">{p.title}</p>
                       <p className="text-xs text-gray-400 font-mono">{p.sku}</p>
                     </div>
+                    {price != null && (
+                      <span className="text-xs font-semibold text-gray-700 shrink-0">
+                        {new Intl.NumberFormat('es-UY', { style: 'currency', currency: p.currency_id ?? 'UYU', maximumFractionDigits: 0 }).format(price)}
+                      </span>
+                    )}
                     <span className="text-xs text-blue-600 font-medium shrink-0">Cambiar</span>
                   </>
                 )
@@ -404,7 +417,7 @@ function HistoryPanel({ item, onClose, skus }: { item: TrackedItem; onClose: () 
               <tbody className="divide-y divide-gray-50">
                 {snapshots.map((snap, i) => {
                   const next = snapshots[i + 1] // older snapshot
-                  const priceChanged = next && snap.price !== next.price
+                  const priceChanged = next && effectivePrice(snap) !== effectivePrice(next)
                   const stockChanged = next && snap.available_quantity !== next.available_quantity
                   const soldChanged = next && snap.sold_quantity !== next.sold_quantity
                   const anyChange = priceChanged || stockChanged || soldChanged || !next
@@ -413,12 +426,30 @@ function HistoryPanel({ item, onClose, skus }: { item: TrackedItem; onClose: () 
                     <tr key={snap.id} className={`${anyChange ? '' : 'opacity-50'} hover:bg-gray-50`}>
                       <td className="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">{formatDate(snap.scraped_at)}</td>
                       <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                        <span className={`font-medium ${priceChanged && snap.price! < next!.price! ? 'text-green-600' : priceChanged ? 'text-red-500' : 'text-gray-900'}`}>
-                          {formatPrice(snap.price)}
-                        </span>
-                        {priceChanged && (
-                          <span className="ml-1 text-xs text-gray-400 line-through">{formatPrice(next!.price)}</span>
-                        )}
+                        {(() => {
+                          const eff = effectivePrice(snap)
+                          const effNext = effectivePrice(next)
+                          const refPrice = snap.original_price ?? (snap.sale_price != null ? snap.price : null)
+                          const discountPct = eff != null && refPrice != null && refPrice > eff
+                            ? Math.round((1 - eff / refPrice) * 100)
+                            : null
+                          return (
+                            <>
+                              <span className={`font-medium ${priceChanged && eff! < effNext! ? 'text-green-600' : priceChanged ? 'text-red-500' : 'text-gray-900'}`}>
+                                {formatPrice(eff)}
+                              </span>
+                              {refPrice != null && discountPct != null && (
+                                <div className="flex items-center justify-end gap-1 mt-0.5">
+                                  <span className="text-xs text-gray-400 line-through">{formatPrice(refPrice)}</span>
+                                  <span className="text-xs font-semibold text-green-600">-{discountPct}%</span>
+                                </div>
+                              )}
+                              {priceChanged && effNext != null && (
+                                <div className="text-xs text-gray-400 line-through mt-0.5">{formatPrice(effNext)}</div>
+                              )}
+                            </>
+                          )
+                        })()}
                       </td>
                       <td className="px-4 py-2.5 text-right whitespace-nowrap">
                         <span className={`font-medium ${stockChanged ? snap.available_quantity! > next!.available_quantity! ? 'text-green-600' : 'text-red-500' : 'text-gray-700'}`}>
@@ -479,11 +510,14 @@ export default function TrackingSection({ initialItems, skus }: { initialItems: 
       const data = await res.json()
       if (!res.ok || !data.success) throw new Error(data.error ?? 'Error')
       setSyncMsg(`${data.snapshots_stored} cambios detectados`)
-      const fresh = await fetch('/api/tracked-items').then(r => r.json())
-      if (Array.isArray(fresh)) setItems(fresh)
     } catch (e) {
       setSyncMsg(e instanceof Error ? e.message : 'Error')
     } finally {
+      // Always refresh items from DB after sync (success or partial)
+      try {
+        const fresh = await fetch('/api/tracked-items').then(r => r.json())
+        if (Array.isArray(fresh)) setItems(fresh)
+      } catch { /* keep existing state */ }
       setSyncing(false)
       setTimeout(() => setSyncMsg(null), 4000)
     }
@@ -581,9 +615,28 @@ export default function TrackingSection({ initialItems, skus }: { initialItems: 
                       )}
                     </td>
                     <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                      <span className="font-semibold text-gray-900">{formatPrice(snap?.price ?? null)}</span>
+                      {(() => {
+                        const eff = effectivePrice(snap)
+                        const basePrice = snap?.price ?? null
+                        // reference price for strikethrough: original_price (seller discount) or price (when sale_price exists)
+                        const refPrice = snap?.original_price ?? (snap?.sale_price != null ? basePrice : null)
+                        const discountPct = eff != null && refPrice != null && refPrice > eff
+                          ? Math.round((1 - eff / refPrice) * 100)
+                          : null
+                        return (
+                          <>
+                            <span className="font-semibold text-gray-900">{formatPrice(eff)}</span>
+                            {refPrice != null && discountPct != null && (
+                              <div className="flex items-center justify-end gap-1 mt-0.5">
+                                <span className="text-xs text-gray-400 line-through">{formatPrice(refPrice)}</span>
+                                <span className="text-xs font-semibold text-green-600">-{discountPct}%</span>
+                              </div>
+                            )}
+                          </>
+                        )
+                      })()}
                       <div className="mt-0.5">
-                        <Delta curr={snap?.price ?? null} prev={prev?.price ?? null} format="price" />
+                        <Delta curr={effectivePrice(snap)} prev={effectivePrice(prev)} format="price" />
                       </div>
                     </td>
                     <td className="px-4 py-2.5 text-right whitespace-nowrap">

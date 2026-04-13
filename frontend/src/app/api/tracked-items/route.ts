@@ -39,11 +39,16 @@ export async function GET() {
   const ids = (items ?? []).map((i) => i.id)
   if (ids.length === 0) return NextResponse.json([])
 
-  const { data: snapshots } = await admin
+  const { data: snapshots, error: snapError } = await admin
     .from('ml_tracked_snapshots')
     .select('*')
     .in('tracked_item_id', ids)
     .order('scraped_at', { ascending: false })
+
+  if (snapError) {
+    console.error('[tracked-items GET] snapshots error:', snapError.message)
+    return NextResponse.json((items ?? []).map(item => ({ ...item, latest_snapshot: null, prev_snapshot: null })))
+  }
 
   // Build latest + prev snapshot maps
   const latestMap = new Map<string, Record<string, unknown>>()
@@ -194,7 +199,7 @@ export async function POST(req: NextRequest) {
   if (insertError) return NextResponse.json({ error: insertError.message }, { status: 500 })
 
   // Store initial snapshot
-  await admin.from('ml_tracked_snapshots').insert({
+  const snapshotInsert = {
     tracked_item_id: inserted.id,
     price,
     original_price: originalPrice,
@@ -202,7 +207,20 @@ export async function POST(req: NextRequest) {
     sold_quantity: soldQty,
     status,
     health,
-  })
+    scraped_at: new Date().toISOString(),
+  }
+  const { data: insertedSnap } = await admin
+    .from('ml_tracked_snapshots')
+    .insert(snapshotInsert)
+    .select()
+    .single()
 
-  return NextResponse.json({ ok: true, item: inserted })
+  return NextResponse.json({
+    ok: true,
+    item: {
+      ...inserted,
+      latest_snapshot: insertedSnap ?? snapshotInsert,
+      prev_snapshot: null,
+    },
+  })
 }
