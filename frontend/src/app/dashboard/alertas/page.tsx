@@ -1,6 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/admin'
-import RulesSection from './RulesSection'
-import HistorySection from './HistorySection'
+import AlertasLayout from './AlertasLayout'
 
 export const dynamic = 'force-dynamic'
 
@@ -27,7 +26,7 @@ export default async function AlertasPage() {
 
     admin
       .from('ml_products')
-      .select('sku, title')
+      .select('sku, title, status')
       .not('sku', 'is', null)
       .order('sku'),
   ])
@@ -37,10 +36,18 @@ export default async function AlertasPage() {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rules = (rulesRes.data ?? []) as any[]
+
+  // SKUs de productos activos (excluir pausados y cerrados)
+  const activeSkus = new Set(
+    (skusRes.data ?? []).filter(p => p.status !== 'paused' && p.status !== 'closed').map(p => p.sku)
+  )
+
   // Deduplicar: conservar solo la última alerta por SKU (vienen ordenadas DESC)
+  // y excluir alertas de productos pausados/cerrados
   const seenSkus = new Set<string>()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const alerts = ((alertsRes.data ?? []) as any[]).filter((a: any) => {
+    if (!activeSkus.has(a.our_sku)) return false
     if (seenSkus.has(a.our_sku)) return false
     seenSkus.add(a.our_sku)
     return true
@@ -48,30 +55,20 @@ export default async function AlertasPage() {
   console.log(`[alertas] rules=${rules.length} alerts=${alerts.length}`)
   const skus = Array.from(
     new Map(
-      (skusRes.data ?? []).map(p => [p.sku, { sku: p.sku as string, title: p.title }])
+      (skusRes.data ?? [])
+        .filter(p => p.status !== 'paused' && p.status !== 'closed')
+        .map(p => [p.sku, { sku: p.sku as string, title: p.title }])
     ).values()
   )
 
   const unreadCount = alerts.filter(a => !a.read_at).length
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Alertas de precio</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Gestioná reglas y revisá alertas disparadas por cambios en precios de competidores
-          </p>
-        </div>
-        {unreadCount > 0 && (
-          <span className="bg-red-500 text-white text-sm font-bold px-3 py-1 rounded-full">
-            {unreadCount} sin leer
-          </span>
-        )}
-      </div>
-
-      <RulesSection initialRules={rules} skus={skus} />
-      <HistorySection initialAlerts={alerts} skus={skus} rules={rules.map((r: { id: string; name: string }) => ({ id: r.id, name: r.name }))} />
-    </div>
+    <AlertasLayout
+      rules={rules}
+      alerts={alerts}
+      skus={skus}
+      unreadCount={unreadCount}
+    />
   )
 }

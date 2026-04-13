@@ -151,7 +151,6 @@ export default function RulesSection({
 }) {
   const router = useRouter()
   const [rules, setRules] = useState<Rule[]>(initialRules)
-  const [collapsed, setCollapsed] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
@@ -243,33 +242,18 @@ export default function RulesSection({
 
   return (
     <section>
-      <div className="flex items-center justify-between mb-4">
-        <button
-          onClick={() => setCollapsed(v => !v)}
-          className="flex items-center gap-2 group"
-        >
-          <h2 className="text-lg font-semibold text-gray-900">Reglas</h2>
-          {rules.length > 0 && (
-            <span className="text-xs text-gray-400 font-normal">{rules.length}</span>
-          )}
-          <svg
-            className={`w-4 h-4 text-gray-400 transition-transform ${collapsed ? '-rotate-90' : ''}`}
-            fill="none" stroke="currentColor" viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-        {!collapsed && !showCreate && !editingId && (
+      {!showCreate && !editingId && (
+        <div className="flex justify-end mb-4">
           <button
             onClick={() => setShowCreate(true)}
             className="flex items-center gap-1.5 text-sm font-medium bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 transition-colors"
           >
             <span className="text-base leading-none">+</span> Nueva regla
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
-      {!collapsed && showCreate && (
+      {showCreate && (
         <RuleForm
           title="Nueva regla de alerta"
           skus={skus}
@@ -281,11 +265,11 @@ export default function RulesSection({
         />
       )}
 
-      {!collapsed && rules.length === 0 ? (
+      {rules.length === 0 ? (
         <div className="bg-white border border-gray-100 rounded-xl p-8 text-center text-gray-400 text-sm">
           No hay reglas configuradas. Creá una para empezar a recibir alertas.
         </div>
-      ) : (!collapsed && (
+      ) : (
         <div className="bg-white border border-gray-100 rounded-xl overflow-hidden divide-y divide-gray-50">
           {rules.map(rule => {
             const count = Array.isArray(rule.ml_price_alerts) && rule.ml_price_alerts[0]
@@ -391,7 +375,7 @@ export default function RulesSection({
             )
           })}
         </div>
-      ))}
+      )}
     </section>
   )
 }
