@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
     .from('ml_price_alerts')
     .select(`
       id, our_sku, competitor_item_id,
-      our_price, competitor_price_before, competitor_price_after,
+      our_price, catalog_price, competitor_price_before, competitor_price_after,
       diff_pct, fired_at, read_at,
       ml_price_alert_rules ( id, name, rule_type ),
       ml_competitor_items ( title, seller_name, thumbnail )

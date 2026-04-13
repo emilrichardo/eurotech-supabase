@@ -14,7 +14,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const body = await req.json()
-  const { name, rule_type, sku, threshold_pct } = body
+  const { name, rule_type, sku, threshold_pct, compare_catalog_price } = body
 
   if (!name || !rule_type) {
     return NextResponse.json({ error: 'name y rule_type son requeridos' }, { status: 400 })
@@ -33,6 +33,7 @@ export async function POST(req: NextRequest) {
       rule_type,
       sku: sku || null,
       threshold_pct: needsThreshold ? Number(threshold_pct) : null,
+      compare_catalog_price: compare_catalog_price !== false,
       enabled: true,
     })
     .select()

@@ -9,6 +9,7 @@ type AlertItem = {
   our_sku: string
   competitor_item_id: string
   our_price: number | null
+  catalog_price: number | null
   competitor_price_before: number | null
   competitor_price_after: number | null
   diff_pct: number | null
@@ -93,6 +94,7 @@ export default function HistorySection({
   const [filter, setFilter] = useState<'all' | 'unread'>('unread')
   const [filterSku, setFilterSku] = useState('')
   const [filterRule, setFilterRule] = useState('')
+  const [filterCatalogCheaper, setFilterCatalogCheaper] = useState(true)
   const [deletingRead, setDeletingRead] = useState(false)
   const [panelSku, setPanelSku] = useState<string | null>(null)
   const [panelData, setPanelData] = useState<PanelData | null>(null)
@@ -104,6 +106,8 @@ export default function HistorySection({
     if (filter === 'unread' && a.read_at) return false
     if (filterSku && a.our_sku !== filterSku) return false
     if (filterRule && a.ml_price_alert_rules?.id !== filterRule) return false
+    // Ocultar alertas donde el precio catálogo propio ya es más barato que el competidor
+    if (filterCatalogCheaper && a.catalog_price != null && a.competitor_price_after != null && a.catalog_price <= a.competitor_price_after) return false
     return true
   })
 
@@ -201,6 +205,17 @@ export default function HistorySection({
               <option key={s.sku} value={s.sku}>{s.sku}</option>
             ))}
           </select>
+
+          {/* Catalog price filter */}
+          <label className="flex items-center gap-1.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={filterCatalogCheaper}
+              onChange={e => setFilterCatalogCheaper(e.target.checked)}
+              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-400"
+            />
+            <span className="text-sm text-gray-600">Ocultar si mi catálogo es más barato</span>
+          </label>
 
           {/* Read/all filter */}
           <div className="flex rounded-lg border border-gray-200 overflow-hidden">

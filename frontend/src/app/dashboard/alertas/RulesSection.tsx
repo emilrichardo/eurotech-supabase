@@ -18,6 +18,7 @@ type Rule = {
   rule_type: string
   sku: string | null
   threshold_pct: number | null
+  compare_catalog_price: boolean
   enabled: boolean
   created_at: string
   ml_price_alerts: [{ count: number }] | []
@@ -36,21 +37,22 @@ function RuleForm({
 }: {
   title: string
   skus: Sku[]
-  initial: { name: string; ruleType: string; sku: string; threshold: string }
+  initial: { name: string; ruleType: string; sku: string; threshold: string; compareCatalog: boolean }
   saving: boolean
   error: string | null
-  onSubmit: (values: { name: string; ruleType: string; sku: string; threshold: string }) => void
+  onSubmit: (values: { name: string; ruleType: string; sku: string; threshold: string; compareCatalog: boolean }) => void
   onCancel: () => void
 }) {
   const [name, setName] = useState(initial.name)
   const [ruleType, setRuleType] = useState(initial.ruleType)
   const [selectedSku, setSelectedSku] = useState(initial.sku)
   const [threshold, setThreshold] = useState(initial.threshold)
+  const [compareCatalog, setCompareCatalog] = useState(initial.compareCatalog)
   const needsThreshold = ['price_diff_pct_above', 'price_diff_pct_below'].includes(ruleType)
 
   return (
     <form
-      onSubmit={e => { e.preventDefault(); onSubmit({ name, ruleType, sku: selectedSku, threshold }) }}
+      onSubmit={e => { e.preventDefault(); onSubmit({ name, ruleType, sku: selectedSku, threshold, compareCatalog }) }}
       className="bg-white border border-blue-200 rounded-xl p-5 mb-4 space-y-4"
     >
       <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
@@ -106,6 +108,18 @@ function RuleForm({
             />
           </div>
         )}
+        <div className="col-span-2 flex items-center gap-2 pt-1">
+          <input
+            id="compare-catalog"
+            type="checkbox"
+            checked={compareCatalog}
+            onChange={e => setCompareCatalog(e.target.checked)}
+            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-400"
+          />
+          <label htmlFor="compare-catalog" className="text-xs text-gray-600 select-none cursor-pointer">
+            Comparar contra precio catálogo <span className="text-gray-400">(si no, usa precio de publicación)</span>
+          </label>
+        </div>
       </div>
       {error && <p className="text-xs text-red-500">{error}</p>}
       <div className="flex gap-2">
@@ -137,6 +151,7 @@ export default function RulesSection({
 }) {
   const router = useRouter()
   const [rules, setRules] = useState<Rule[]>(initialRules)
+  const [collapsed, setCollapsed] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
@@ -147,7 +162,7 @@ export default function RulesSection({
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
-  async function handleCreate(values: { name: string; ruleType: string; sku: string; threshold: string }) {
+  async function handleCreate(values: { name: string; ruleType: string; sku: string; threshold: string; compareCatalog: boolean }) {
     setCreating(true)
     setCreateError(null)
     const needsThreshold = ['price_diff_pct_above', 'price_diff_pct_below'].includes(values.ruleType)
@@ -160,11 +175,12 @@ export default function RulesSection({
           rule_type: values.ruleType,
           sku: values.sku || null,
           threshold_pct: needsThreshold ? Number(values.threshold) : null,
+          compare_catalog_price: values.compareCatalog,
         }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
-      setRules(prev => [{ ...data, ml_price_alerts: [] }, ...prev])
+      setRules(prev => [{ ...data, compare_catalog_price: values.compareCatalog, ml_price_alerts: [] }, ...prev])
       setShowCreate(false)
     } catch (e) {
       setCreateError(e instanceof Error ? e.message : 'Error')
@@ -173,7 +189,7 @@ export default function RulesSection({
     }
   }
 
-  async function handleEdit(id: string, values: { name: string; ruleType: string; sku: string; threshold: string }) {
+  async function handleEdit(id: string, values: { name: string; ruleType: string; sku: string; threshold: string; compareCatalog: boolean }) {
     setEditSaving(true)
     setEditError(null)
     const needsThreshold = ['price_diff_pct_above', 'price_diff_pct_below'].includes(values.ruleType)
@@ -186,6 +202,7 @@ export default function RulesSection({
           rule_type: values.ruleType,
           sku: values.sku || null,
           threshold_pct: needsThreshold ? Number(values.threshold) : null,
+          compare_catalog_price: values.compareCatalog,
         }),
       })
       const data = await res.json()
@@ -196,6 +213,7 @@ export default function RulesSection({
         rule_type: values.ruleType,
         sku: values.sku || null,
         threshold_pct: needsThreshold ? Number(values.threshold) : null,
+        compare_catalog_price: values.compareCatalog,
       } : r))
       setEditingId(null)
     } catch (e) {
@@ -226,8 +244,22 @@ export default function RulesSection({
   return (
     <section>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-gray-900">Reglas</h2>
-        {!showCreate && !editingId && (
+        <button
+          onClick={() => setCollapsed(v => !v)}
+          className="flex items-center gap-2 group"
+        >
+          <h2 className="text-lg font-semibold text-gray-900">Reglas</h2>
+          {rules.length > 0 && (
+            <span className="text-xs text-gray-400 font-normal">{rules.length}</span>
+          )}
+          <svg
+            className={`w-4 h-4 text-gray-400 transition-transform ${collapsed ? '-rotate-90' : ''}`}
+            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {!collapsed && !showCreate && !editingId && (
           <button
             onClick={() => setShowCreate(true)}
             className="flex items-center gap-1.5 text-sm font-medium bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 transition-colors"
@@ -237,11 +269,11 @@ export default function RulesSection({
         )}
       </div>
 
-      {showCreate && (
+      {!collapsed && showCreate && (
         <RuleForm
           title="Nueva regla de alerta"
           skus={skus}
-          initial={{ name: '', ruleType: 'competitor_cheaper', sku: '', threshold: '' }}
+          initial={{ name: '', ruleType: 'competitor_cheaper', sku: '', threshold: '', compareCatalog: true }}
           saving={creating}
           error={createError}
           onSubmit={handleCreate}
@@ -249,11 +281,11 @@ export default function RulesSection({
         />
       )}
 
-      {rules.length === 0 ? (
+      {!collapsed && rules.length === 0 ? (
         <div className="bg-white border border-gray-100 rounded-xl p-8 text-center text-gray-400 text-sm">
           No hay reglas configuradas. Creá una para empezar a recibir alertas.
         </div>
-      ) : (
+      ) : (!collapsed && (
         <div className="bg-white border border-gray-100 rounded-xl overflow-hidden divide-y divide-gray-50">
           {rules.map(rule => {
             const count = Array.isArray(rule.ml_price_alerts) && rule.ml_price_alerts[0]
@@ -346,6 +378,7 @@ export default function RulesSection({
                         ruleType: rule.rule_type,
                         sku: rule.sku ?? '',
                         threshold: rule.threshold_pct?.toString() ?? '',
+                        compareCatalog: rule.compare_catalog_price ?? true,
                       }}
                       saving={editSaving}
                       error={editError}
@@ -358,7 +391,7 @@ export default function RulesSection({
             )
           })}
         </div>
-      )}
+      ))}
     </section>
   )
 }

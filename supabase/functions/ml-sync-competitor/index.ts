@@ -116,22 +116,22 @@ async function fetchCatalogPrice(
   catalogId: string,
   token: string,
   ourUserId: number
-): Promise<{ price: number | null; sellerId: number | null }> {
+): Promise<{ price: number | null; sellerId: number | null; currency: string | null }> {
   const res = await fetch(
     `${ML_API}/products/${catalogId}/items?status=active&limit=20`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
-  if (!res.ok) return { price: null, sellerId: null };
+  if (!res.ok) return { price: null, sellerId: null, currency: null };
 
   const data = await res.json();
   const results: CatalogItemResult[] = data.results ?? [];
-  if (results.length === 0) return { price: null, sellerId: null };
+  if (results.length === 0) return { price: null, sellerId: null, currency: null };
 
   // Pick cheapest competitor (exclude our own seller ID)
   const competitors = results.filter((r) => r.seller_id !== ourUserId);
   const pool = competitors.length > 0 ? competitors : results;
   const best = pool.reduce((a, b) => (a.price <= b.price ? a : b));
-  return { price: best.price, sellerId: best.seller_id };
+  return { price: best.price, sellerId: best.seller_id, currency: best.currency_id ?? null };
 }
 
 interface MLItemPrice {
@@ -141,6 +141,7 @@ interface MLItemPrice {
     id: string;
     price: number | null;
     original_price: number | null;
+    currency_id: string | null;
     available_quantity: number | null;
     sold_quantity: number | null;
     status: string | null;
@@ -162,6 +163,24 @@ interface AlertRule {
   rule_type: AlertRuleType;
   threshold_pct: number | null;
   enabled: boolean;
+  compare_catalog_price: boolean;
+}
+
+// ─── Exchange Rate ────────────────────────────────────────────────────────────
+
+async function fetchUsdToUyu(): Promise<number | null> {
+  try {
+    const res = await fetch("https://open.er-api.com/v6/latest/USD");
+    if (!res.ok) return null;
+    const data = await res.json();
+    return (data.rates?.UYU as number) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function convertUsdToUyu(usdAmount: number, rate: number): number {
+  return Math.round(usdAmount * rate);
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -182,7 +201,7 @@ async function fetchItemPrices(
 ): Promise<MLItemPrice[]> {
   const idsParam = ids.join(",");
   const res = await fetch(
-    `${ML_API}/items?ids=${idsParam}&attributes=id,price,original_price,available_quantity,sold_quantity,status,health`,
+    `${ML_API}/items?ids=${idsParam}&attributes=id,price,original_price,currency_id,available_quantity,sold_quantity,status,health`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
   if (!res.ok) {
@@ -198,9 +217,13 @@ function evaluateRule(
   rule: AlertRule,
   priceBefore: number | null,
   priceAfter: number | null,
-  ourPrice: number | null
+  ourPrice: number | null,
+  catalogPrice: number | null,
 ): boolean {
   if (priceAfter === null) return false;
+
+  // Use catalog price as reference when rule is configured to do so (and catalog price is available)
+  const refPrice = (rule.compare_catalog_price && catalogPrice !== null) ? catalogPrice : ourPrice;
 
   switch (rule.rule_type) {
     case "price_changed":
@@ -208,24 +231,24 @@ function evaluateRule(
       return priceBefore !== null && priceBefore !== priceAfter;
 
     case "competitor_cheaper":
-      // Fire whenever competitor is cheaper, regardless of price change
-      return ourPrice !== null && priceAfter < ourPrice;
+      // Fire whenever competitor is cheaper than our reference price
+      return refPrice !== null && priceAfter < refPrice;
 
     case "competitor_pricier":
-      // Fire whenever competitor is more expensive, regardless of price change
-      return ourPrice !== null && priceAfter > ourPrice;
+      // Fire whenever competitor is more expensive than our reference price
+      return refPrice !== null && priceAfter > refPrice;
 
     case "price_diff_pct_above": {
       // competidor más barato en al menos threshold_pct%
-      if (ourPrice === null || ourPrice === 0 || rule.threshold_pct === null) return false;
-      const diffPct = ((ourPrice - priceAfter) / ourPrice) * 100;
+      if (refPrice === null || refPrice === 0 || rule.threshold_pct === null) return false;
+      const diffPct = ((refPrice - priceAfter) / refPrice) * 100;
       return diffPct >= rule.threshold_pct;
     }
 
     case "price_diff_pct_below": {
       // competidor más caro en al menos threshold_pct%
-      if (ourPrice === null || ourPrice === 0 || rule.threshold_pct === null) return false;
-      const diffPct = ((priceAfter - ourPrice) / ourPrice) * 100;
+      if (refPrice === null || refPrice === 0 || rule.threshold_pct === null) return false;
+      const diffPct = ((priceAfter - refPrice) / refPrice) * 100;
       return diffPct >= rule.threshold_pct;
     }
 
@@ -270,16 +293,19 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
   const skus = [...new Set((competitorItems as CompetitorItem[]).map((c) => c.our_sku))];
   const { data: ownProducts, error: prodError } = await supabase
     .from("ml_products")
-    .select("sku, price")
+    .select("sku, price, catalog_price")
     .in("sku", skus);
 
   if (prodError) throw new Error(`Error cargando precios propios: ${prodError.message}`);
 
   const ownPriceMap = new Map<string, number>();
+  const catalogPriceMap = new Map<string, number>();
   for (const p of ownProducts ?? []) {
-    if (p.sku && p.price !== null) {
-      // Si hay múltiples con mismo SKU, quedamos con el primero (debería ser único)
-      if (!ownPriceMap.has(p.sku)) ownPriceMap.set(p.sku, p.price);
+    if (p.sku && p.price !== null && !ownPriceMap.has(p.sku)) {
+      ownPriceMap.set(p.sku, p.price);
+    }
+    if (p.sku && p.catalog_price !== null && !catalogPriceMap.has(p.sku)) {
+      catalogPriceMap.set(p.sku, p.catalog_price);
     }
   }
 
@@ -294,10 +320,15 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
 
   console.log(`Catalog items: ${catalogItems.length}, Direct items: ${directItems.length}`);
 
+  // Fetch exchange rate once for the whole sync run
+  const usdRate = await fetchUsdToUyu();
+  console.log(`USD→UYU rate: ${usdRate ?? "unavailable"}`);
+
   // ── Helper: process alerts and update for a resolved price ──────────────
   function buildUpdateAndAlerts(
     item: CompetitorItem,
     newPrice: number | null,
+    usdPrice: number | null = null,
   ): {
     update: Record<string, unknown>;
     alerts: {
@@ -305,6 +336,7 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
       our_sku: string;
       competitor_item_id: string;
       our_price: number | null;
+      catalog_price: number | null;
       competitor_price_before: number | null;
       competitor_price_after: number | null;
       diff_pct: number | null;
@@ -312,12 +344,15 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
   } {
     const prevPrice = item.price ?? null;
     const ourPrice = ownPriceMap.get(item.our_sku) ?? null;
+    const catalogPrice = catalogPriceMap.get(item.our_sku) ?? null;
 
     const update: Record<string, unknown> = {
       id: item.id,
       our_sku: item.our_sku,
       price: newPrice,
       previous_price: prevPrice,
+      currency_id: "UYU",
+      usd_price: usdPrice,
       synced_at: new Date().toISOString(),
     };
 
@@ -325,16 +360,20 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
       (r) => r.sku === null || r.sku === item.our_sku
     );
     const alerts = applicableRules
-      .filter((rule) => evaluateRule(rule, prevPrice, newPrice, ourPrice))
-      .map((rule) => ({
-        rule_id: rule.id,
-        our_sku: item.our_sku,
-        competitor_item_id: item.id,
-        our_price: ourPrice,
-        competitor_price_before: prevPrice,
-        competitor_price_after: newPrice,
-        diff_pct: calcDiffPct(ourPrice, newPrice),
-      }));
+      .filter((rule) => evaluateRule(rule, prevPrice, newPrice, ourPrice, catalogPrice))
+      .map((rule) => {
+        const refPrice = (rule.compare_catalog_price && catalogPrice !== null) ? catalogPrice : ourPrice;
+        return {
+          rule_id: rule.id,
+          our_sku: item.our_sku,
+          competitor_item_id: item.id,
+          our_price: refPrice,
+          catalog_price: catalogPrice,
+          competitor_price_before: prevPrice,
+          competitor_price_after: newPrice,
+          diff_pct: calcDiffPct(refPrice, newPrice),
+        };
+      });
 
     return { update, alerts };
   }
@@ -346,9 +385,17 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
 
     await Promise.all(batch.map(async (item) => {
       try {
-        const { price: newPrice } = await fetchCatalogPrice(item.id, token, tokenRow.user_id);
-        if (newPrice === null) return;
-        const { update, alerts } = buildUpdateAndAlerts(item, newPrice);
+        const { price: rawPrice, currency } = await fetchCatalogPrice(item.id, token, tokenRow.user_id);
+        if (rawPrice === null) return;
+
+        let newPrice = rawPrice;
+        let usdPrice: number | null = null;
+        if (currency === "USD" && usdRate) {
+          usdPrice = rawPrice;
+          newPrice = convertUsdToUyu(rawPrice, usdRate);
+        }
+
+        const { update, alerts } = buildUpdateAndAlerts(item, newPrice, usdPrice);
         allUpdates.push(update);
         allAlerts.push(...alerts);
       } catch (err) {
@@ -389,6 +436,7 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
       our_sku: string;
       competitor_item_id: string;
       our_price: number | null;
+      catalog_price: number | null;
       competitor_price_before: number | null;
       competitor_price_after: number | null;
       diff_pct: number | null;
@@ -398,6 +446,8 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
       id: string;
       price: number | null;
       previous_price: number | null;
+      currency_id: string;
+      usd_price: number | null;
       available_quantity: number | null;
       sold_quantity: number | null;
       status: string | null;
@@ -411,14 +461,23 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
       const local = batch.find((i) => i.id === result.id);
       if (!local) continue;
 
-      const newPrice = result.body.price ?? null;
+      let newPrice = result.body.price ?? null;
+      let usdPrice: number | null = null;
+      if (result.body.currency_id === "USD" && newPrice !== null && usdRate) {
+        usdPrice = newPrice;
+        newPrice = convertUsdToUyu(newPrice, usdRate);
+      }
+
       const prevPrice = local.price ?? null;
       const ourPrice = ownPriceMap.get(local.our_sku) ?? null;
+      const catalogPrice = catalogPriceMap.get(local.our_sku) ?? null;
 
       updateRows.push({
         id: result.id,
         price: newPrice,
         previous_price: prevPrice,
+        currency_id: "UYU",
+        usd_price: usdPrice,
         available_quantity: result.body.available_quantity ?? null,
         sold_quantity: result.body.sold_quantity ?? null,
         status: result.body.status ?? null,
@@ -432,15 +491,17 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
       );
 
       for (const rule of applicableRules) {
-        if (evaluateRule(rule, prevPrice, newPrice, ourPrice)) {
+        if (evaluateRule(rule, prevPrice, newPrice, ourPrice, catalogPrice)) {
+          const refPrice = (rule.compare_catalog_price && catalogPrice !== null) ? catalogPrice : ourPrice;
           alertRows.push({
             rule_id: rule.id,
             our_sku: local.our_sku,
             competitor_item_id: result.id,
-            our_price: ourPrice,
+            our_price: refPrice,
+            catalog_price: catalogPrice,
             competitor_price_before: prevPrice,
             competitor_price_after: newPrice,
-            diff_pct: calcDiffPct(ourPrice, newPrice),
+            diff_pct: calcDiffPct(refPrice, newPrice),
           });
         }
       }
