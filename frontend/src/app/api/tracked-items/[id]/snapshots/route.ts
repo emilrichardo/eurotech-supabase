@@ -1,0 +1,15 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { createAdminClient } from '@/lib/supabase/admin'
+
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+  const admin = createAdminClient()
+  const { data, error } = await admin
+    .from('ml_tracked_snapshots')
+    .select('*')
+    .eq('tracked_item_id', id)
+    .order('scraped_at', { ascending: false })
+    .limit(200)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}

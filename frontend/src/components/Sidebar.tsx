@@ -9,6 +9,7 @@ const navItems = [
   { href: '/dashboard', label: 'Inicio' },
   { href: '/dashboard/productos', label: 'Productos' },
   { href: '/dashboard/alertas', label: 'Alertas de precio' },
+  { href: '/dashboard/seguimiento', label: 'Seguimiento' },
 ]
 
 export default function Sidebar({ user }: { user: User }) {
