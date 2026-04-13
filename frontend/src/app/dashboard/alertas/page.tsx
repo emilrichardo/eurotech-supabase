@@ -37,8 +37,14 @@ export default async function AlertasPage() {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rules = (rulesRes.data ?? []) as any[]
+  // Deduplicar: conservar solo la última alerta por SKU (vienen ordenadas DESC)
+  const seenSkus = new Set<string>()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const alerts = (alertsRes.data ?? []) as any[]
+  const alerts = ((alertsRes.data ?? []) as any[]).filter((a: any) => {
+    if (seenSkus.has(a.our_sku)) return false
+    seenSkus.add(a.our_sku)
+    return true
+  })
   console.log(`[alertas] rules=${rules.length} alerts=${alerts.length}`)
   const skus = Array.from(
     new Map(

@@ -259,62 +259,54 @@ export default function HistorySection({
             const priceWentDown = alert.competitor_price_after != null && alert.competitor_price_before != null
               && alert.competitor_price_after < alert.competitor_price_before
             const diff = alert.diff_pct
+            const isActive = panelSku === alert.our_sku
+            const isCheaper = alert.ml_price_alert_rules?.rule_type === 'competitor_cheaper' || alert.ml_price_alert_rules?.rule_type === 'price_diff_pct_above'
 
             return (
               <div
                 key={alert.id}
-                onClick={() => setPanelSku(panelSku === alert.our_sku ? null : alert.our_sku)}
-                className={`bg-white border rounded-xl px-4 py-3 flex items-start gap-4 transition-all cursor-pointer ${isRead ? 'opacity-60 border-gray-100' : 'border-orange-200'} ${panelSku === alert.our_sku ? 'ring-2 ring-blue-400' : 'hover:border-gray-300'}`}
+                onClick={() => setPanelSku(isActive ? null : alert.our_sku)}
+                className={`bg-white border rounded-xl px-4 py-3 flex items-start gap-3 transition-all cursor-pointer ${isRead ? 'opacity-60 border-gray-100' : isCheaper ? 'border-amber-300 bg-amber-50/40' : 'border-gray-200'} ${isActive ? 'ring-2 ring-blue-400' : 'hover:border-gray-300'}`}
               >
-                {/* Unread dot */}
-                <div className="mt-1.5 shrink-0">
-                  {!isRead
-                    ? <div className="w-2 h-2 rounded-full bg-orange-400" />
-                    : <div className="w-2 h-2 rounded-full bg-gray-200" />
-                  }
-                </div>
+                <div className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${isRead ? 'bg-gray-200' : isCheaper ? 'bg-amber-400' : 'bg-blue-400'}`} />
 
-                {/* Content */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-start justify-between gap-2 flex-wrap">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {alert.ml_price_alert_rules && (
-                        <RuleTypeBadge
-                          ruleType={alert.ml_price_alert_rules.rule_type}
-                          thresholdPct={alert.diff_pct != null ? Math.abs(alert.diff_pct) : null}
-                        />
-                      )}
-                      {alert.ml_price_alert_rules && (
-                        <span className="text-xs text-gray-400">"{alert.ml_price_alert_rules.name}"</span>
-                      )}
-                    </div>
-                    <span className="text-xs text-gray-400 shrink-0">{formatDate(alert.fired_at)}</span>
-                  </div>
-
-                  <div className="mt-1 flex items-center gap-3 flex-wrap">
+                <div className="flex-1 min-w-0 space-y-1">
+                  {/* Product */}
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-mono text-xs bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded">{alert.our_sku}</span>
                     {skuMap.get(alert.our_sku) && (
-                      <span className="text-sm font-medium text-gray-900 line-clamp-1">{skuMap.get(alert.our_sku)}</span>
+                      <span className="text-sm font-semibold text-gray-900 line-clamp-1">{skuMap.get(alert.our_sku)}</span>
                     )}
                   </div>
-                  {(alert.ml_competitor_items?.seller_name || alert.ml_competitor_items?.title) && (
-                    <div className="mt-0.5 flex items-center gap-2 flex-wrap">
-                      <span className="text-xs text-gray-400">vs.</span>
-                      {alert.ml_competitor_items?.seller_name && (
-                        <span className="text-xs font-medium text-gray-600">{alert.ml_competitor_items.seller_name}</span>
-                      )}
-                      {alert.ml_competitor_items?.title && (
-                        <span className="text-xs text-gray-400 line-clamp-1">{alert.ml_competitor_items.title}</span>
-                      )}
-                    </div>
-                  )}
 
-                  <div className="mt-2 flex items-center gap-4 flex-wrap">
-                    <div className="flex items-center gap-2 text-sm">
+                  {/* Rule + competitor */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {alert.ml_price_alert_rules && (
+                      <RuleTypeBadge
+                        ruleType={alert.ml_price_alert_rules.rule_type}
+                        thresholdPct={alert.diff_pct != null ? Math.abs(alert.diff_pct) : null}
+                      />
+                    )}
+                    {alert.ml_price_alert_rules && (
+                      <span className="text-xs text-gray-400">"{alert.ml_price_alert_rules.name}"</span>
+                    )}
+                    {(alert.ml_competitor_items?.seller_name || alert.ml_competitor_items?.title) && (
+                      <>
+                        <span className="text-xs text-gray-300">vs.</span>
+                        <span className="text-xs font-medium text-gray-600">
+                          {alert.ml_competitor_items?.seller_name ?? alert.ml_competitor_items?.title}
+                        </span>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Prices */}
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="flex items-center gap-1.5 text-sm">
                       {alert.competitor_price_before != null && (
-                        <span className="text-gray-400 line-through">{formatPrice(alert.competitor_price_before)}</span>
+                        <span className="text-gray-400 line-through text-xs">{formatPrice(alert.competitor_price_before)}</span>
                       )}
-                      <span className="text-base font-bold">→</span>
+                      <span className="text-gray-300 text-xs">→</span>
                       <span className={`font-bold ${priceWentDown ? 'text-red-600' : 'text-green-600'}`}>
                         {formatPrice(alert.competitor_price_after)}
                       </span>
@@ -323,14 +315,14 @@ export default function HistorySection({
                       <span className="text-xs text-gray-400">Nuestro: {formatPrice(alert.our_price)}</span>
                     )}
                     {diff != null && (
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${diff < 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'}`}>
+                      <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${diff < 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'}`}>
                         {diff < 0 ? `${diff.toFixed(1)}%` : `+${diff.toFixed(1)}%`}
                       </span>
                     )}
+                    <span className="text-xs text-gray-300 ml-auto">{formatDate(alert.fired_at)}</span>
                   </div>
                 </div>
 
-                {/* Actions */}
                 <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
                   {!isRead && (
                     <button
@@ -344,9 +336,7 @@ export default function HistorySection({
                     onClick={() => deleteAlert(alert.id)}
                     className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none"
                     title="Eliminar"
-                  >
-                    ×
-                  </button>
+                  >×</button>
                 </div>
               </div>
             )

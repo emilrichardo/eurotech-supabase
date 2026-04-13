@@ -412,10 +412,13 @@ export default function ProductsTable({
     if (selectedCategory && p.category_id !== selectedCategory) return false
     return true
   }).sort((a, b) => {
-    const aHas = (a.sku && (localCompetitors[a.sku]?.length ?? 0) > 0) ? 1 : 0
-    const bHas = (b.sku && (localCompetitors[b.sku]?.length ?? 0) > 0) ? 1 : 0
-    if (bHas !== aHas) return bHas - aHas
-    return 0 // keep server order (last_updated desc) within each group
+    const aLosing = (a.buybox_price != null && (a.catalog_price == null || a.buybox_price < a.catalog_price)) ? 0 : 1
+    const bLosing = (b.buybox_price != null && (b.catalog_price == null || b.buybox_price < b.catalog_price)) ? 0 : 1
+    if (aLosing !== bLosing) return aLosing - bLosing
+    const aHas = (a.sku && (localCompetitors[a.sku]?.length ?? 0) > 0) ? 0 : 1
+    const bHas = (b.sku && (localCompetitors[b.sku]?.length ?? 0) > 0) ? 0 : 1
+    if (aHas !== bHas) return aHas - bHas
+    return 0
   })
 
   return (
@@ -564,18 +567,22 @@ export default function ProductsTable({
                 onClick={() => handleSelect(p)}
                 className={`flex items-center gap-4 bg-white rounded-xl border px-4 py-3 cursor-pointer transition-colors ${selected?.id === p.id ? 'border-blue-300 bg-blue-50' : losingBuybox ? 'border-red-200 hover:bg-red-50/20' : compCount > 0 ? 'border-orange-100 hover:bg-orange-50/20' : 'border-gray-100 hover:bg-gray-50'}`}
               >
-                {p.thumbnail ? (
-                  <Image src={imgUrl(p.thumbnail)!} alt={p.title} width={72} height={72} className="rounded object-contain w-[72px] h-[72px] shrink-0" unoptimized />
-                ) : (
-                  <div className="w-[72px] h-[72px] bg-gray-100 rounded shrink-0" />
-                )}
+                <div className="relative shrink-0">
+                  {p.thumbnail ? (
+                    <Image src={imgUrl(p.thumbnail)!} alt={p.title} width={72} height={72} className="rounded object-contain w-18 h-18" unoptimized />
+                  ) : (
+                    <div className="w-18 h-18 bg-gray-100 rounded" />
+                  )}
+                  {(losingBuybox || compCount > 0) && (
+                    <span className="absolute -top-1.5 -left-1.5 flex items-center justify-center w-6 h-6 rounded-full shadow text-sm leading-none bg-white">
+                      {losingBuybox ? '🥈' : '🥇'}
+                    </span>
+                  )}
+                </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="font-medium text-gray-900 line-clamp-1">{p.title}</p>
                     <CompetitorDot count={compCount} />
-                    {losingBuybox && (
-                      <span className="text-xs font-semibold bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full">Perdemos buy-box</span>
-                    )}
                   </div>
                   <p className="text-xs text-gray-400 mt-0.5 font-mono">{p.sku ?? p.id}</p>
                 </div>
@@ -610,15 +617,24 @@ export default function ProductsTable({
                 onClick={() => handleSelect(p)}
                 className={`bg-white rounded-xl border overflow-hidden cursor-pointer transition-colors relative ${selected?.id === p.id ? 'border-blue-300 bg-blue-50' : losingBuybox ? 'border-red-300 hover:border-red-400' : compCount > 0 ? 'border-orange-200 hover:border-orange-300' : 'border-gray-100 hover:border-gray-300'}`}
               >
-                {/* Top-right badge */}
-                <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
-                  {losingBuybox && (
-                    <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-tight shadow-sm">
-                      ↓ buy-box
+                {/* Top-left medal */}
+                <div className="absolute top-2 left-2 z-10">
+                  {losingBuybox ? (
+                    <span className="flex items-center justify-center w-7 h-7 rounded-full bg-red-500 shadow text-base leading-none" title="Perdiste el primer puesto">
+                      🥈
                     </span>
-                  )}
-                  {compCount > 0 && <CompetitorDot count={compCount} />}
+                  ) : compCount > 0 ? (
+                    <span className="flex items-center justify-center w-7 h-7 rounded-full bg-amber-400 shadow text-base leading-none" title="Primer puesto">
+                      🥇
+                    </span>
+                  ) : null}
                 </div>
+                {/* Top-right competitor count */}
+                {compCount > 0 && (
+                  <div className="absolute top-2 right-2 z-10">
+                    <CompetitorDot count={compCount} />
+                  </div>
+                )}
                 <div className="flex items-center justify-center bg-gray-50 h-40">
                   {p.thumbnail ? (
                     <Image src={imgUrl(p.thumbnail)!} alt={p.title} width={140} height={140} className="object-contain w-full h-full p-3" unoptimized />
