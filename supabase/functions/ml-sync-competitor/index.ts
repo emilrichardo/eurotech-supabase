@@ -406,7 +406,7 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
     if (allUpdates.length > 0) {
       const { error: upsertError } = await supabase
         .from("ml_competitor_items")
-        .upsert(allUpdates, { onConflict: "id,our_sku" });
+        .upsert(allUpdates, { onConflict: "id" });
       if (upsertError) console.error(`Error actualizando catalog items: ${upsertError.message}`);
       else itemsUpdated += allUpdates.length;
     }

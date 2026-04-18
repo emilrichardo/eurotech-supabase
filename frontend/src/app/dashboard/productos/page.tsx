@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 export default async function ProductosPage() {
   const supabase = createAdminClient()
 
-  const [productsResult, competitorsResult, categoriesResult] = await Promise.all([
+  const [productsResult, competitorsResult, categoriesResult, lastProductSyncResult, lastCompetitorSyncResult] = await Promise.all([
     supabase
       .from('ml_products')
       .select(
@@ -32,10 +32,26 @@ export default async function ProductosPage() {
     supabase
       .from('ml_categories')
       .select('id, name, full_path'),
+
+    supabase
+      .from('ml_products')
+      .select('synced_at')
+      .order('synced_at', { ascending: false })
+      .limit(1)
+      .single(),
+
+    supabase
+      .from('ml_competitor_items')
+      .select('synced_at')
+      .order('synced_at', { ascending: false })
+      .limit(1)
+      .single(),
   ])
 
   const { data: products, error, count } = productsResult
   const competitors = competitorsResult.data ?? []
+  const lastProductSync = lastProductSyncResult.data?.synced_at ?? null
+  const lastCompetitorSync = lastCompetitorSyncResult.data?.synced_at ?? null
   const categoryMap: Record<string, string> = {}
   for (const c of categoriesResult.data ?? []) {
     categoryMap[c.id] = c.full_path ?? c.name
@@ -65,6 +81,25 @@ export default async function ProductosPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Productos</h1>
           <p className="text-gray-500 text-sm mt-0.5">{count ?? 0} publicaciones</p>
+          <div className="flex items-center gap-4 mt-1.5">
+            <span className="text-xs text-gray-400">
+              Propios:{' '}
+              <span className="text-gray-600 font-medium">
+                {lastProductSync
+                  ? new Intl.DateTimeFormat('es-UY', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(lastProductSync))
+                  : 'Nunca'}
+              </span>
+            </span>
+            <span className="text-gray-200 select-none">·</span>
+            <span className="text-xs text-gray-400">
+              Competencia:{' '}
+              <span className="text-gray-600 font-medium">
+                {lastCompetitorSync
+                  ? new Intl.DateTimeFormat('es-UY', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(lastCompetitorSync))
+                  : 'Nunca'}
+              </span>
+            </span>
+          </div>
         </div>
         <SyncButton />
       </div>
