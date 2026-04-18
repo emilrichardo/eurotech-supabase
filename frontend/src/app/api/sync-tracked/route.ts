@@ -139,9 +139,9 @@ export async function POST() {
           return
         }
 
-        console.log(`[sync-tracked] ${item.ml_item_id}: price=${body.price} original_price=${body.original_price} sale_price=${salePrice} stock=${body.available_quantity} sold=${body.sold_quantity} status=${body.status}`)
-
         const salePrice = body.sale_price?.amount ?? null
+
+        console.log(`[sync-tracked] ${item.ml_item_id}: price=${body.price} original_price=${body.original_price} sale_price=${salePrice} stock=${body.available_quantity} sold=${body.sold_quantity} status=${body.status}`)
 
         const latest = latestMap.get(item.id)
         const changed = !latest ||
