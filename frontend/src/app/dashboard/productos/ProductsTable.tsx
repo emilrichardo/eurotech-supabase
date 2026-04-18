@@ -318,6 +318,8 @@ export default function ProductsTable({
   competitorsBySku: Record<string, Competitor[]>
   categoryMap: Record<string, string>
 }) {
+  const PAGE_SIZE = 50
+
   const [selected, setSelected] = useState<Product | null>(null)
   const [view, setView] = useState<ViewMode>('grid')
   const [localCompetitors, setLocalCompetitors] = useState<Record<string, Competitor[]>>(competitorsBySku)
@@ -328,6 +330,7 @@ export default function ProductsTable({
   const [openGear, setOpenGear] = useState<string | null>(null)
   const [syncingProduct, setSyncingProduct] = useState(false)
   const [syncProductMsg, setSyncProductMsg] = useState<string | null>(null)
+  const [currentPage, setCurrentPage] = useState(0)
 
   async function handleSyncProduct(productId: string) {
     setSyncingProduct(true)
@@ -397,6 +400,8 @@ export default function ProductsTable({
     .sort((a, b) => a.name.localeCompare(b.name))
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
 
+  function resetPage() { setCurrentPage(0) }
+
   const filteredProducts = products.filter(p => {
     if (search.trim()) {
       const q = search.toLowerCase()
@@ -421,6 +426,9 @@ export default function ProductsTable({
     return 0
   })
 
+  const totalPages = Math.ceil(filteredProducts.length / PAGE_SIZE)
+  const pagedProducts = filteredProducts.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE)
+
   return (
     <div className="relative">
       {/* Backdrop */}
@@ -441,7 +449,7 @@ export default function ProductsTable({
           <input
             type="text"
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={e => { setSearch(e.target.value); resetPage() }}
             placeholder="Buscar por título, SKU o ID..."
             className="w-full pl-9 pr-4 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
           />
@@ -450,7 +458,7 @@ export default function ProductsTable({
         {/* Category filter */}
         <select
           value={selectedCategory ?? ''}
-          onChange={e => setSelectedCategory(e.target.value || null)}
+          onChange={e => { setSelectedCategory(e.target.value || null); resetPage() }}
           className="py-1.5 px-3 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <option value="">Todas las categorías</option>
@@ -461,7 +469,7 @@ export default function ProductsTable({
 
         {/* Competitors filter */}
         <button
-          onClick={() => setOnlyWithCompetitors(v => !v)}
+          onClick={() => { setOnlyWithCompetitors(v => !v); resetPage() }}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
             onlyWithCompetitors
               ? 'bg-orange-50 border-orange-300 text-orange-700'
@@ -506,7 +514,7 @@ export default function ProductsTable({
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {filteredProducts.map((p) => {
+              {pagedProducts.map((p) => {
                 const compCount = p.sku ? (localCompetitors[p.sku]?.length ?? 0) : 0
                 return (
                   <tr
@@ -558,7 +566,7 @@ export default function ProductsTable({
       {/* Vista: Listado */}
       {view === 'listado' && (
         <div className="space-y-2">
-          {filteredProducts.map((p) => {
+          {pagedProducts.map((p) => {
             const compCount = p.sku ? (localCompetitors[p.sku]?.length ?? 0) : 0
             const losingBuybox = p.buybox_price != null && (p.catalog_price == null || p.buybox_price < p.catalog_price)
             return (
@@ -608,7 +616,7 @@ export default function ProductsTable({
       {/* Vista: Grid */}
       {view === 'grid' && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-          {filteredProducts.map((p) => {
+          {pagedProducts.map((p) => {
             const compCount = p.sku ? (localCompetitors[p.sku]?.length ?? 0) : 0
             const losingBuybox = p.buybox_price != null && (p.catalog_price == null || p.buybox_price < p.catalog_price)
             return (
@@ -669,6 +677,40 @@ export default function ProductsTable({
               </div>
             )
           })}
+        </div>
+      )}
+
+      {/* Paginador */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between mt-4 px-1">
+          <p className="text-sm text-gray-400">
+            {currentPage * PAGE_SIZE + 1}–{Math.min((currentPage + 1) * PAGE_SIZE, filteredProducts.length)} de {filteredProducts.length}
+          </p>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
+              disabled={currentPage === 0}
+              className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              ← Anterior
+            </button>
+            {Array.from({ length: totalPages }, (_, i) => i).map(i => (
+              <button
+                key={i}
+                onClick={() => setCurrentPage(i)}
+                className={`w-8 h-8 rounded-lg text-sm font-medium transition-colors ${i === currentPage ? 'bg-gray-900 text-white' : 'border border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+              >
+                {i + 1}
+              </button>
+            ))}
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages - 1, p + 1))}
+              disabled={currentPage === totalPages - 1}
+              className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              Siguiente →
+            </button>
+          </div>
         </div>
       )}
 

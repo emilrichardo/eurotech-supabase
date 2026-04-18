@@ -109,7 +109,7 @@ export async function POST() {
               title = pd.name ?? null
               thumbnail = (pd.pictures?.[0] as { url?: string } | undefined)?.url ?? null
             }
-            return { id: item.ml_item_id, price: best.price, original_price: null, available_quantity: null, sold_quantity: null, status: 'active', health: null, title, thumbnail, seller_id: null, permalink: null }
+            return { id: item.ml_item_id, price: best.price, sale_price: null, original_price: null, available_quantity: null, sold_quantity: null, status: 'active', health: null, title, thumbnail, seller_id: null, permalink: null }
           } else {
             const res = await fetch(`${ML_API}/items/${item.ml_item_id}`, { headers })
             if (!res.ok) return null
