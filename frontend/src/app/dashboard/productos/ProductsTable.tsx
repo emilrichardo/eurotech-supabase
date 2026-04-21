@@ -326,6 +326,7 @@ export default function ProductsTable({
   const [showAddModal, setShowAddModal] = useState(false)
   const [search, setSearch] = useState('')
   const [onlyWithCompetitors, setOnlyWithCompetitors] = useState(false)
+  const [showPaused, setShowPaused] = useState(false)
   const [panelTab, setPanelTab] = useState<'competitors' | 'details'>('competitors')
   const [openGear, setOpenGear] = useState<string | null>(null)
   const [syncingProduct, setSyncingProduct] = useState(false)
@@ -402,7 +403,10 @@ export default function ProductsTable({
 
   function resetPage() { setCurrentPage(0) }
 
+  const pausedCount = products.filter(p => p.status === 'paused').length
+
   const filteredProducts = products.filter(p => {
+    if (!showPaused && p.status === 'paused') return false
     if (search.trim()) {
       const q = search.toLowerCase()
       if (
@@ -480,6 +484,20 @@ export default function ProductsTable({
           Con rivales
         </button>
 
+        {pausedCount > 0 && (
+          <button
+            onClick={() => { setShowPaused(v => !v); resetPage() }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+              showPaused
+                ? 'bg-yellow-50 border-yellow-300 text-yellow-700'
+                : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+            }`}
+          >
+            <span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" />
+            Pausados ({pausedCount})
+          </button>
+        )}
+
         {/* View switcher */}
         <div className="flex gap-1 ml-auto">
         {([['tabla', <IconTable key="t" />], ['listado', <IconList key="l" />], ['grid', <IconGrid key="g" />]] as [ViewMode, React.ReactNode][]).map(([mode, icon]) => (
@@ -505,8 +523,8 @@ export default function ProductsTable({
                 <th className="px-4 py-3 font-medium w-20"></th>
                 <th className="px-4 py-3 font-medium">Producto</th>
                 <th className="px-4 py-3 font-medium">SKU</th>
-                <th className="px-4 py-3 font-medium text-right">Precio pub.</th>
-                <th className="px-4 py-3 font-medium text-right">Precio cat.</th>
+                <th className="px-4 py-3 font-medium text-right">Precio</th>
+                <th className="px-4 py-3 font-medium text-right">Cat.</th>
                 <th className="px-4 py-3 font-medium text-right">Stock</th>
                 <th className="px-4 py-3 font-medium text-right">Vendidos</th>
                 <th className="px-4 py-3 font-medium">Estado</th>
@@ -537,7 +555,12 @@ export default function ProductsTable({
                       <p className="text-xs text-gray-400 mt-0.5">{p.condition === 'new' ? 'Nuevo' : 'Usado'} · {p.id}</p>
                     </td>
                     <td className="px-4 py-3 text-xs font-mono text-gray-600">{p.sku ?? '—'}</td>
-                    <td className="px-4 py-3 text-right font-medium text-gray-900 whitespace-nowrap">{formatPrice(p.price, p.currency_id)}</td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      <p className="font-medium text-gray-900">{formatPrice(p.catalog_price ?? p.price, p.currency_id)}</p>
+                      {p.catalog_price != null && p.price != null && p.catalog_price !== p.price && (
+                        <p className="text-xs text-gray-400">pub. {formatPrice(p.price, p.currency_id)}</p>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
                       {p.catalog_price != null
                         ? <span className={p.catalog_price < (p.price ?? 0) ? 'text-blue-600 font-medium' : 'text-gray-700'}>{formatPrice(p.catalog_price, p.currency_id)}</span>
@@ -595,7 +618,10 @@ export default function ProductsTable({
                   <p className="text-xs text-gray-400 mt-0.5 font-mono">{p.sku ?? p.id}</p>
                 </div>
                 <div className="text-right shrink-0">
-                  <p className="font-semibold text-gray-900">{formatPrice(p.price, p.currency_id)}</p>
+                  <p className="font-semibold text-gray-900">{formatPrice(p.catalog_price ?? p.price, p.currency_id)}</p>
+                  {p.catalog_price != null && p.price != null && p.catalog_price !== p.price && (
+                    <p className="text-xs text-gray-400">pub. {formatPrice(p.price, p.currency_id)}</p>
+                  )}
                   {losingBuybox && p.buybox_price != null && (
                     <p className="text-xs text-red-500 font-medium">buy-box: {formatPrice(p.buybox_price, p.currency_id)}</p>
                   )}
@@ -655,16 +681,15 @@ export default function ProductsTable({
                   {p.sku && <p className="text-xs text-gray-400 font-mono mt-1">{p.sku}</p>}
                   <div className="mt-2 flex items-center justify-between gap-1">
                     <div>
-                      <span className="text-sm font-semibold text-gray-900">{formatPrice(p.price, p.currency_id)}</span>
+                      <span className="text-sm font-semibold text-gray-900">{formatPrice(p.catalog_price ?? p.price, p.currency_id)}</span>
                       {losingBuybox && p.buybox_price != null ? (
                         <span className="ml-1.5 text-xs text-red-500 font-medium" title="Buy-box ganado por rival">
                           rival: {formatPrice(p.buybox_price, p.currency_id)}
                         </span>
-                      ) : p.catalog_price != null && p.catalog_price !== p.price ? (
-                        <span className="ml-1.5 text-xs text-blue-600 font-medium" title="Precio catálogo ML">
-                          cat. {formatPrice(p.catalog_price, p.currency_id)}
-                        </span>
                       ) : null}
+                      {p.catalog_price != null && p.price != null && p.catalog_price !== p.price && (
+                        <p className="text-xs text-gray-400 mt-0.5">pub. {formatPrice(p.price, p.currency_id)}</p>
+                      )}
                     </div>
                     <span className={`px-1.5 py-0.5 rounded-full text-xs font-medium ${STATUS_COLOR[p.status ?? ''] ?? 'bg-gray-100 text-gray-600'}`}>
                       {STATUS_LABEL[p.status ?? ''] ?? p.status ?? '—'}
@@ -736,8 +761,8 @@ export default function ProductsTable({
           comp?: Competitor
         }
         const allEntries: PriceEntry[] = []
-        if (pubPrice != null) allEntries.push({ key: 'our-pub', label: 'Mi precio publicación', price: pubPrice, isOurs: true, oursType: 'pub' })
-        if (catPrice != null && catPrice !== pubPrice) allEntries.push({ key: 'our-cat', label: 'Mi precio catálogo', price: catPrice, isOurs: true, oursType: 'cat' })
+        if (catPrice != null) allEntries.push({ key: 'our-cat', label: 'Mi precio catálogo', price: catPrice, isOurs: true, oursType: 'cat' })
+        else if (pubPrice != null) allEntries.push({ key: 'our-pub', label: 'Mi precio publicación', price: pubPrice, isOurs: true, oursType: 'pub' })
         for (const c of comps) {
           if (c.price != null) allEntries.push({ key: c.id, label: c.title ?? c.id, price: c.price, isOurs: false, comp: c })
         }
@@ -746,10 +771,6 @@ export default function ProductsTable({
         function diffVsRef(price: number) {
           if (refPrice == null || refPrice === 0) return null
           return ((price - refPrice) / refPrice) * 100
-        }
-        function diffVsPub(price: number) {
-          if (pubPrice == null || pubPrice === 0) return null
-          return ((price - pubPrice) / pubPrice) * 100
         }
 
         return (
@@ -810,22 +831,27 @@ export default function ProductsTable({
                       )}
                     </div>
                     <div className="border-t border-gray-50 pt-2 space-y-1">
-                      <div className="flex items-baseline justify-between">
-                        <span className="text-xs text-gray-400">Precio pub.</span>
-                        <span className="text-lg font-bold text-gray-900">{formatPrice(pubPrice, selected.currency_id)}</span>
-                      </div>
-                      {catPrice != null && (
+                      {catPrice != null ? (
                         <div className="flex items-baseline justify-between">
-                          <span className="text-xs text-gray-400">Mi cat.</span>
-                          <span className={`text-base font-semibold ${catPrice < (pubPrice ?? Infinity) ? 'text-blue-600' : 'text-gray-700'}`}>
-                            {formatPrice(catPrice, selected.currency_id)}
-                          </span>
+                          <span className="text-xs text-gray-400">Precio cat.</span>
+                          <span className="text-lg font-bold text-blue-700">{formatPrice(catPrice, selected.currency_id)}</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-xs text-gray-400">Precio cat.</span>
+                          <span className="text-lg font-bold text-gray-900">{formatPrice(pubPrice, selected.currency_id)}</span>
+                        </div>
+                      )}
+                      {pubPrice != null && catPrice != null && pubPrice !== catPrice && (
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-xs text-gray-300">Pub.</span>
+                          <span className="text-xs text-gray-400">{formatPrice(pubPrice, selected.currency_id)}</span>
                         </div>
                       )}
                       {selected.buybox_price != null && selected.buybox_price !== catPrice && (
                         <div className="flex items-baseline justify-between">
                           <span className="text-xs text-gray-400">
-                            Buy-box cat. {catPrice == null ? <span className="text-orange-400">(rival)</span> : <span className="text-orange-400">(rival gana)</span>}
+                            Buy-box {catPrice == null ? <span className="text-orange-400">(rival)</span> : <span className="text-orange-400">(rival gana)</span>}
                           </span>
                           <span className="text-base font-semibold text-orange-500">
                             {formatPrice(selected.buybox_price, selected.currency_id)}
@@ -834,7 +860,7 @@ export default function ProductsTable({
                       )}
                       {selected.buybox_price != null && selected.buybox_price === catPrice && (
                         <div className="flex items-baseline justify-between">
-                          <span className="text-xs text-gray-400">Buy-box cat. <span className="text-green-500">(ganamos)</span></span>
+                          <span className="text-xs text-gray-400">Buy-box <span className="text-green-500">(ganamos)</span></span>
                           <span className="text-base font-semibold text-green-600">
                             {formatPrice(selected.buybox_price, selected.currency_id)}
                           </span>
@@ -892,15 +918,9 @@ export default function ProductsTable({
                     </div>
 
                     {/* Reference prices banner */}
-                    {(pubPrice != null || catPrice != null || buyboxPrice != null) && (
+                    {(catPrice != null || buyboxPrice != null || pubPrice != null) && (
                       <div className="grid grid-cols-2 gap-2">
-                        {pubPrice != null && (
-                          <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-center">
-                            <p className="text-xs text-gray-400 mb-0.5">Mi precio pub.</p>
-                            <p className="text-base font-bold text-gray-900">{formatPrice(pubPrice, selected.currency_id)}</p>
-                          </div>
-                        )}
-                        {catPrice != null && (
+                        {catPrice != null ? (
                           <div className={`rounded-xl p-3 text-center border ${buyboxIsCompetitor ? 'bg-blue-50 border-blue-200' : 'bg-green-50 border-green-200'}`}>
                             <p className={`text-xs mb-0.5 ${buyboxIsCompetitor ? 'text-blue-400' : 'text-green-500'}`}>
                               Mi precio cat.{!buyboxIsCompetitor && ' 🏆'}
@@ -908,8 +928,16 @@ export default function ProductsTable({
                             <p className={`text-base font-bold ${buyboxIsCompetitor ? 'text-blue-700' : 'text-green-700'}`}>
                               {formatPrice(catPrice, selected.currency_id)}
                             </p>
+                            {pubPrice != null && pubPrice !== catPrice && (
+                              <p className="text-xs text-gray-400 mt-0.5">pub. {formatPrice(pubPrice, selected.currency_id)}</p>
+                            )}
                           </div>
-                        )}
+                        ) : pubPrice != null ? (
+                          <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-center">
+                            <p className="text-xs text-gray-400 mb-0.5">Mi precio pub.</p>
+                            <p className="text-base font-bold text-gray-900">{formatPrice(pubPrice, selected.currency_id)}</p>
+                          </div>
+                        ) : null}
                         {buyboxIsCompetitor && (
                           <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-center">
                             <p className="text-xs text-orange-400 mb-0.5">Buy-box rival</p>
@@ -973,7 +1001,7 @@ export default function ProductsTable({
                                   </p>
                                   <p className="text-xs text-gray-400">
                                     {entry.isOurs
-                                      ? (entry.oursType === 'cat' ? 'Nuestro — catálogo' : 'Nuestro — publicación')
+                                      ? (entry.oursType === 'cat' ? 'Nuestro — catálogo' : 'Nuestro')
                                       : isPaused
                                         ? 'Pausado'
                                         : (entry.comp?.seller_name ?? 'Competidor')}

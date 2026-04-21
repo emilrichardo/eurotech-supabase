@@ -21,7 +21,7 @@ export default async function ProductosPage() {
          shipping, tags, attributes, pictures`,
         { count: 'exact' }
       )
-      .not('status', 'in', '("paused","closed")')
+      .neq('status', 'closed')
       .order('last_updated', { ascending: false })
       .limit(5000),
 

@@ -26,9 +26,11 @@ export default async function AlertasPage() {
 
     admin
       .from('ml_products')
-      .select('sku, title, status')
+      .select('sku, title, synced_at')
       .not('sku', 'is', null)
-      .order('sku'),
+      .eq('status', 'active')
+      .order('sku')
+      .order('synced_at', { ascending: false }),
   ])
 
   if (rulesRes.error) console.error('[alertas] rules error:', rulesRes.error.message)
@@ -37,13 +39,11 @@ export default async function AlertasPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rules = (rulesRes.data ?? []) as any[]
 
-  // SKUs de productos activos (excluir pausados y cerrados)
-  const activeSkus = new Set(
-    (skusRes.data ?? []).filter(p => p.status !== 'paused' && p.status !== 'closed').map(p => p.sku)
-  )
+  // SKUs de productos activos (solo active, filtrado en DB)
+  const activeSkus = new Set((skusRes.data ?? []).map(p => p.sku))
 
   // Deduplicar: conservar solo la última alerta por SKU (vienen ordenadas DESC)
-  // y excluir alertas de productos pausados/cerrados
+  // y excluir alertas de productos no activos
   const seenSkus = new Set<string>()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const alerts = ((alertsRes.data ?? []) as any[]).filter((a: any) => {
@@ -55,9 +55,7 @@ export default async function AlertasPage() {
   console.log(`[alertas] rules=${rules.length} alerts=${alerts.length}`)
   const skus = Array.from(
     new Map(
-      (skusRes.data ?? [])
-        .filter(p => p.status !== 'paused' && p.status !== 'closed')
-        .map(p => [p.sku, { sku: p.sku as string, title: p.title }])
+      (skusRes.data ?? []).map(p => [p.sku, { sku: p.sku as string, title: p.title }])
     ).values()
   )
 

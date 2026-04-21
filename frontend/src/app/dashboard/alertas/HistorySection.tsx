@@ -103,6 +103,7 @@ export default function HistorySection({
   const skuMap = new Map(skus.map(s => [s.sku, s.title]))
 
   const visible = alerts.filter(a => {
+    if (!skuMap.has(a.our_sku)) return false  // ocultar si el producto no está activo
     if (filter === 'unread' && a.read_at) return false
     if (filterSku && a.our_sku !== filterSku) return false
     if (filterRule && a.ml_price_alert_rules?.id !== filterRule) return false
@@ -114,7 +115,7 @@ export default function HistorySection({
     return true
   })
 
-  const unreadCount = alerts.filter(a => !a.read_at).length
+  const unreadCount = alerts.filter(a => !a.read_at && skuMap.has(a.our_sku)).length
 
   useEffect(() => {
     if (!panelSku) { setPanelData(null); return }
@@ -154,10 +155,10 @@ export default function HistorySection({
   const panelEntries = (() => {
     if (!panelData?.product) return []
     const { price: pubPrice, catalog_price: catPrice, currency_id } = panelData.product
-    type Entry = { key: string; label: string; price: number; isOurs: boolean; usd_price?: number | null; thumbnail?: string | null; permalink?: string | null; seller?: string | null }
+    type Entry = { key: string; label: string; price: number; isOurs: boolean; oursType?: 'pub' | 'cat'; usd_price?: number | null; thumbnail?: string | null; permalink?: string | null; seller?: string | null }
     const entries: Entry[] = []
-    if (pubPrice != null) entries.push({ key: 'our-pub', label: 'Mi precio publicación', price: pubPrice, isOurs: true })
-    if (catPrice != null && catPrice !== pubPrice) entries.push({ key: 'our-cat', label: 'Mi precio catálogo', price: catPrice, isOurs: true })
+    if (catPrice != null) entries.push({ key: 'our-cat', label: 'Mi precio catálogo', price: catPrice, isOurs: true, oursType: 'cat' })
+    else if (pubPrice != null) entries.push({ key: 'our-pub', label: 'Mi precio', price: pubPrice, isOurs: true, oursType: 'pub' })
     for (const c of panelData.competitors) {
       if (c.price != null && !c.paused) {
         entries.push({ key: c.id, label: c.seller_name ?? c.title ?? c.id, price: c.price, isOurs: false, usd_price: c.usd_price, thumbnail: c.thumbnail, permalink: c.permalink, seller: c.seller_name })
@@ -443,16 +444,21 @@ export default function HistorySection({
                         )}
                       </div>
                       <div className="border-t border-gray-50 pt-2 space-y-1">
-                        {panelData.product.price != null && (
+                        {panelData.product.catalog_price != null ? (
                           <div className="flex items-baseline justify-between">
-                            <span className="text-xs text-gray-400">Precio pub.</span>
+                            <span className="text-xs text-gray-400">Precio cat.</span>
+                            <span className="text-lg font-bold text-blue-700">{formatPrice(panelData.product.catalog_price, panelData.product.currency_id)}</span>
+                          </div>
+                        ) : panelData.product.price != null ? (
+                          <div className="flex items-baseline justify-between">
+                            <span className="text-xs text-gray-400">Precio cat.</span>
                             <span className="text-lg font-bold text-gray-900">{formatPrice(panelData.product.price, panelData.product.currency_id)}</span>
                           </div>
-                        )}
-                        {panelData.product.catalog_price != null && panelData.product.catalog_price !== panelData.product.price && (
+                        ) : null}
+                        {panelData.product.price != null && panelData.product.catalog_price != null && panelData.product.price !== panelData.product.catalog_price && (
                           <div className="flex items-baseline justify-between">
-                            <span className="text-xs text-gray-400">Mi cat.</span>
-                            <span className="text-base font-semibold text-blue-600">{formatPrice(panelData.product.catalog_price, panelData.product.currency_id)}</span>
+                            <span className="text-xs text-gray-300">Pub.</span>
+                            <span className="text-xs text-gray-400">{formatPrice(panelData.product.price, panelData.product.currency_id)}</span>
                           </div>
                         )}
                         {panelData.product.buybox_price != null && panelData.product.buybox_price !== panelData.product.catalog_price && (
@@ -487,13 +493,13 @@ export default function HistorySection({
                         const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : null
                         const isCheaper = entry.diff != null && entry.diff < 0
                         return (
-                          <div key={entry.key} className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${entry.isOurs ? 'bg-gray-50 border-gray-300 shadow-sm' : 'bg-white border-gray-100'}`}>
+                          <div key={entry.key} className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${entry.isOurs ? (entry.oursType === 'cat' ? 'bg-blue-50 border-blue-300 shadow-sm' : 'bg-gray-50 border-gray-300 shadow-sm') : 'bg-white border-gray-100'}`}>
                             <div className="w-7 text-center shrink-0">
                               {medal ? <span className="text-xl">{medal}</span> : <span className="text-sm font-bold text-gray-400">{idx + 1}</span>}
                             </div>
                             {entry.isOurs ? (
-                              <div className="w-9 h-9 rounded-lg bg-gray-200 flex items-center justify-center shrink-0">
-                                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                              <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${entry.oursType === 'cat' ? 'bg-blue-200' : 'bg-gray-200'}`}>
+                                <svg className={`w-4 h-4 ${entry.oursType === 'cat' ? 'text-blue-600' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
                               </div>
                             ) : entry.thumbnail ? (
                               <Image src={imgUrl(entry.thumbnail)!} alt="" width={36} height={36} className="w-9 h-9 rounded-lg object-contain bg-gray-50 shrink-0" unoptimized />
@@ -501,8 +507,8 @@ export default function HistorySection({
                               <div className="w-9 h-9 rounded-lg bg-gray-100 shrink-0" />
                             )}
                             <div className="flex-1 min-w-0">
-                              <p className={`text-sm font-medium line-clamp-1 ${entry.isOurs ? 'text-gray-600' : 'text-gray-900'}`}>{entry.label}</p>
-                              <p className="text-xs text-gray-400">{entry.isOurs ? 'Nuestro — publicación' : entry.seller ?? 'Competidor'}</p>
+                              <p className={`text-sm font-medium line-clamp-1 ${entry.isOurs ? (entry.oursType === 'cat' ? 'text-blue-700' : 'text-gray-600') : 'text-gray-900'}`}>{entry.label}</p>
+                              <p className="text-xs text-gray-400">{entry.isOurs ? (entry.oursType === 'cat' ? 'Nuestro — catálogo' : 'Nuestro') : entry.seller ?? 'Competidor'}</p>
                             </div>
                             <div className="text-right shrink-0">
                               <p className="text-base font-bold text-gray-900">{formatPrice(entry.price, entry.currency)}</p>

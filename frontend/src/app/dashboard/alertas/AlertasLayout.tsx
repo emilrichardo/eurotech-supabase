@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import RulesSection from './RulesSection'
 import HistorySection from './HistorySection'
+import SyncButton from '../productos/SyncButton'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Props = { rules: any[]; alerts: any[]; skus: { sku: string; title: string }[]; unreadCount: number }
@@ -26,6 +27,7 @@ export default function AlertasLayout({ rules, alerts, skus, unreadCount }: Prop
               {unreadCount} sin leer
             </span>
           )}
+          <SyncButton />
           <button
             onClick={() => setShowRules(true)}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors shadow-sm"
