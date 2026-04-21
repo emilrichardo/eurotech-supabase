@@ -23,7 +23,7 @@ export default async function ProductosPage() {
       )
       .not('status', 'in', '("paused","closed")')
       .order('last_updated', { ascending: false })
-      .limit(500),
+      .limit(5000),
 
     supabase
       .from('ml_competitor_items')

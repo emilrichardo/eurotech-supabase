@@ -117,30 +117,32 @@ interface SearchResult {
 }
 
 async function fetchAllItemIds(token: string, userId: number): Promise<string[]> {
-  const ids: string[] = [];
+  const allIds = new Set<string>();
   const limit = 100;
+  // Fetch items for each status to avoid the default "active-only" filter
+  const statuses = ["active", "paused", "closed", "under_review", "inactive"];
 
-  // Primer página con search_type=scan (soporta >1000 items via scroll_id)
-  let data = await mlFetch<SearchResult>(
-    `/users/${userId}/items/search?search_type=scan&limit=${limit}`,
-    token
-  );
-  ids.push(...data.results);
-  const total = data.paging.total;
-  console.log(`IDs obtenidos: ${ids.length} / ${total}`);
-
-  // Continuar con scroll_id hasta traer todos
-  while (data.scroll_id && data.results.length > 0) {
-    data = await mlFetch<SearchResult>(
-      `/users/${userId}/items/search?search_type=scan&limit=${limit}&scroll_id=${encodeURIComponent(data.scroll_id)}`,
+  for (const status of statuses) {
+    let data = await mlFetch<SearchResult>(
+      `/users/${userId}/items/search?search_type=scan&limit=${limit}&status=${status}`,
       token
     );
-    if (data.results.length === 0) break;
-    ids.push(...data.results);
-    console.log(`IDs obtenidos: ${ids.length} / ${total}`);
+    for (const id of data.results) allIds.add(id);
+    const total = data.paging.total;
+    console.log(`[${status}] IDs obtenidos: ${allIds.size} / ${total}`);
+
+    while (data.scroll_id && data.results.length > 0) {
+      data = await mlFetch<SearchResult>(
+        `/users/${userId}/items/search?search_type=scan&limit=${limit}&status=${status}&scroll_id=${encodeURIComponent(data.scroll_id)}`,
+        token
+      );
+      if (data.results.length === 0) break;
+      for (const id of data.results) allIds.add(id);
+      console.log(`[${status}] IDs obtenidos: ${allIds.size} / ${total}`);
+    }
   }
 
-  return ids;
+  return [...allIds];
 }
 
 // Divide array en chunks
