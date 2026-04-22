@@ -9,7 +9,6 @@ type AlertItem = {
   our_sku: string
   competitor_item_id: string
   our_price: number | null
-  catalog_price: number | null
   competitor_price_before: number | null
   competitor_price_after: number | null
   diff_pct: number | null
@@ -29,7 +28,6 @@ type PanelData = {
     sku: string | null
     price: number | null
     sale_price: number | null
-    catalog_price: number | null
     buybox_price: number | null
     status: string | null
     thumbnail: string | null
@@ -101,7 +99,6 @@ export default function HistorySection({
   const [filter, setFilter] = useState<'all' | 'unread'>('unread')
   const [filterSku, setFilterSku] = useState('')
   const [filterRule, setFilterRule] = useState('')
-  const [filterCatalogCheaper, setFilterCatalogCheaper] = useState(true)
   const [deletingRead, setDeletingRead] = useState(false)
   const [panelSku, setPanelSku] = useState<string | null>(null)
   const [panelData, setPanelData] = useState<PanelData | null>(null)
@@ -114,14 +111,11 @@ export default function HistorySection({
     if (filter === 'unread' && a.read_at) return false
     if (filterSku && a.our_sku !== filterSku) return false
     if (filterRule && a.ml_price_alert_rules?.id !== filterRule) return false
-    const ruleType = a.ml_price_alert_rules?.rule_type ?? ''
-    const isCompetitorCheaperRule = ruleType === 'competitor_cheaper' || ruleType === 'price_diff_pct_above' || ruleType === 'price_changed' || ruleType === ''
-    if (filterCatalogCheaper && isCompetitorCheaperRule && a.catalog_price != null && a.competitor_price_after != null && a.catalog_price <= a.competitor_price_after) return false
     return true
   })
 
   const unreadCount = alerts.filter(a => !a.read_at && skuMap.has(a.our_sku)).length
-  const hasActiveFilters = filter !== 'unread' || !!filterSku || !!filterRule || !filterCatalogCheaper
+  const hasActiveFilters = filter !== 'unread' || !!filterSku || !!filterRule
 
   useEffect(() => {
     if (!panelSku) { setPanelData(null); return }
@@ -161,24 +155,22 @@ export default function HistorySection({
     setFilter('unread')
     setFilterSku('')
     setFilterRule('')
-    setFilterCatalogCheaper(true)
   }
 
   // Build sorted price list for panel
   const panelEntries = (() => {
     if (!panelData?.product) return []
-    const { price: pubPrice, sale_price: salePrice, catalog_price: catPrice, currency_id } = panelData.product
-    type Entry = { key: string; label: string; price: number; isOurs: boolean; oursType?: 'pub' | 'cat' | 'sale'; usd_price?: number | null; thumbnail?: string | null; permalink?: string | null; seller?: string | null }
+    const { price: pubPrice, sale_price: salePrice, currency_id } = panelData.product
+    type Entry = { key: string; label: string; price: number; isOurs: boolean; oursType?: 'pub' | 'sale'; usd_price?: number | null; thumbnail?: string | null; permalink?: string | null; seller?: string | null }
     const entries: Entry[] = []
-    if (catPrice != null) entries.push({ key: 'our-cat', label: 'Mi precio catálogo', price: catPrice, isOurs: true, oursType: 'cat' })
-    else if (salePrice != null) entries.push({ key: 'our-sale', label: 'Mi precio oferta', price: salePrice, isOurs: true, oursType: 'sale' })
+    if (salePrice != null) entries.push({ key: 'our-sale', label: 'Mi precio oferta', price: salePrice, isOurs: true, oursType: 'sale' })
     else if (pubPrice != null) entries.push({ key: 'our-pub', label: 'Mi precio', price: pubPrice, isOurs: true, oursType: 'pub' })
     for (const c of panelData.competitors) {
       if (c.price != null && !c.paused) {
         entries.push({ key: c.id, label: c.seller_name ?? c.title ?? c.id, price: c.price, isOurs: false, usd_price: c.usd_price, thumbnail: c.thumbnail, permalink: c.permalink, seller: c.seller_name })
       }
     }
-    const refPrice = catPrice ?? salePrice ?? pubPrice
+    const refPrice = salePrice ?? pubPrice
     return entries
       .sort((a, b) => a.price - b.price)
       .map(e => ({
@@ -233,16 +225,6 @@ export default function HistorySection({
             <option value="">Todos los SKU</option>
             {skus.map(s => <option key={s.sku} value={s.sku}>{s.sku}</option>)}
           </select>
-
-          <label className="flex items-center gap-1.5 cursor-pointer select-none pl-2 border-l border-gray-200 ml-1">
-            <input
-              type="checkbox"
-              checked={filterCatalogCheaper}
-              onChange={e => setFilterCatalogCheaper(e.target.checked)}
-              className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 focus:ring-0 focus:ring-offset-0"
-            />
-            <span className="text-xs text-gray-600">Ocultar si mi catálogo ya es más barato</span>
-          </label>
 
           <div className="flex-1" />
 
@@ -495,12 +477,7 @@ export default function HistorySection({
                         )}
                       </div>
                       <div className="border-t border-gray-50 pt-2 space-y-1">
-                        {panelData.product.catalog_price != null ? (
-                          <div className="flex items-baseline justify-between">
-                            <span className="text-xs text-gray-400">Precio cat.</span>
-                            <span className="text-lg font-bold text-blue-700">{formatPrice(panelData.product.catalog_price, panelData.product.currency_id)}</span>
-                          </div>
-                        ) : panelData.product.sale_price != null ? (
+                        {panelData.product.sale_price != null ? (
                           <div className="flex items-baseline justify-between">
                             <span className="text-xs text-emerald-600 font-medium">Oferta</span>
                             <span className="text-lg font-bold text-emerald-600">{formatPrice(panelData.product.sale_price, panelData.product.currency_id)}</span>
@@ -517,13 +494,7 @@ export default function HistorySection({
                             <span className="text-xs text-gray-400 line-through">{formatPrice(panelData.product.price, panelData.product.currency_id)}</span>
                           </div>
                         )}
-                        {panelData.product.price != null && panelData.product.catalog_price != null && panelData.product.price !== panelData.product.catalog_price && (
-                          <div className="flex items-baseline justify-between">
-                            <span className="text-xs text-gray-300">Pub.</span>
-                            <span className="text-xs text-gray-400">{formatPrice(panelData.product.price, panelData.product.currency_id)}</span>
-                          </div>
-                        )}
-                        {panelData.product.buybox_price != null && panelData.product.buybox_price !== panelData.product.catalog_price && (
+                        {panelData.product.buybox_price != null && (
                           <div className="flex items-baseline justify-between">
                             <span className="text-xs text-gray-400">Buy-box rival</span>
                             <span className="text-base font-semibold text-orange-500">{formatPrice(panelData.product.buybox_price, panelData.product.currency_id)}</span>
@@ -555,13 +526,13 @@ export default function HistorySection({
                         const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : null
                         const isCheaper = entry.diff != null && entry.diff < 0
                         return (
-                          <div key={entry.key} className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${entry.isOurs ? (entry.oursType === 'cat' ? 'bg-blue-50 border-blue-300 shadow-sm' : entry.oursType === 'sale' ? 'bg-emerald-50 border-emerald-300 shadow-sm' : 'bg-gray-50 border-gray-300 shadow-sm') : 'bg-white border-gray-100'}`}>
+                          <div key={entry.key} className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${entry.isOurs ? (entry.oursType === 'sale' ? 'bg-emerald-50 border-emerald-300 shadow-sm' : 'bg-gray-50 border-gray-300 shadow-sm') : 'bg-white border-gray-100'}`}>
                             <div className="w-7 text-center shrink-0">
                               {medal ? <span className="text-xl">{medal}</span> : <span className="text-sm font-bold text-gray-400">{idx + 1}</span>}
                             </div>
                             {entry.isOurs ? (
-                              <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${entry.oursType === 'cat' ? 'bg-blue-200' : entry.oursType === 'sale' ? 'bg-emerald-200' : 'bg-gray-200'}`}>
-                                <svg className={`w-4 h-4 ${entry.oursType === 'cat' ? 'text-blue-600' : entry.oursType === 'sale' ? 'text-emerald-700' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                              <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${entry.oursType === 'sale' ? 'bg-emerald-200' : 'bg-gray-200'}`}>
+                                <svg className={`w-4 h-4 ${entry.oursType === 'sale' ? 'text-emerald-700' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
                               </div>
                             ) : entry.thumbnail ? (
                               <Image src={imgUrl(entry.thumbnail)!} alt="" width={36} height={36} className="w-9 h-9 rounded-lg object-contain bg-gray-50 shrink-0" unoptimized />
@@ -569,8 +540,8 @@ export default function HistorySection({
                               <div className="w-9 h-9 rounded-lg bg-gray-100 shrink-0" />
                             )}
                             <div className="flex-1 min-w-0">
-                              <p className={`text-sm font-medium line-clamp-1 ${entry.isOurs ? (entry.oursType === 'cat' ? 'text-blue-700' : entry.oursType === 'sale' ? 'text-emerald-700' : 'text-gray-600') : 'text-gray-900'}`}>{entry.label}</p>
-                              <p className="text-xs text-gray-400">{entry.isOurs ? (entry.oursType === 'cat' ? 'Nuestro — catálogo' : entry.oursType === 'sale' ? 'Nuestro — oferta' : 'Nuestro') : entry.seller ?? 'Competidor'}</p>
+                              <p className={`text-sm font-medium line-clamp-1 ${entry.isOurs ? (entry.oursType === 'sale' ? 'text-emerald-700' : 'text-gray-600') : 'text-gray-900'}`}>{entry.label}</p>
+                              <p className="text-xs text-gray-400">{entry.isOurs ? (entry.oursType === 'sale' ? 'Nuestro — oferta' : 'Nuestro') : entry.seller ?? 'Competidor'}</p>
                             </div>
                             <div className="text-right shrink-0">
                               <p className="text-base font-bold text-gray-900">{formatPrice(entry.price, entry.currency)}</p>
