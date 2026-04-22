@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import RulesSection from './RulesSection'
 import HistorySection from './HistorySection'
 import SyncButton from '../productos/SyncButton'
@@ -11,36 +11,61 @@ type Props = { rules: any[]; alerts: any[]; skus: { sku: string; title: string }
 export default function AlertasLayout({ rules, alerts, skus, unreadCount }: Props) {
   const [showRules, setShowRules] = useState(false)
 
+  const stats = useMemo(() => {
+    let cheaper = 0
+    let pricier = 0
+    let changed = 0
+    for (const a of alerts) {
+      const t = a.ml_price_alert_rules?.rule_type ?? ''
+      if (t === 'competitor_cheaper' || t === 'price_diff_pct_above') cheaper++
+      else if (t === 'competitor_pricier' || t === 'price_diff_pct_below') pricier++
+      else changed++
+    }
+    return { total: alerts.length, cheaper, pricier, changed }
+  }, [alerts])
+
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Alertas de precio</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Alertas disparadas por cambios en precios de competidores
+          <div className="flex items-center gap-2.5 mb-1">
+            <h1 className="text-2xl font-bold text-gray-900">Alertas de precio</h1>
+            {unreadCount > 0 && (
+              <span className="inline-flex items-center gap-1.5 bg-red-50 text-red-600 text-xs font-semibold px-2.5 py-1 rounded-full border border-red-100">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                {unreadCount} sin leer
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-gray-500">
+            Movimientos de precio detectados en competidores
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {unreadCount > 0 && (
-            <span className="bg-red-500 text-white text-sm font-bold px-3 py-1 rounded-full">
-              {unreadCount} sin leer
-            </span>
-          )}
           <SyncButton />
           <button
             onClick={() => setShowRules(true)}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors shadow-sm"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-colors shadow-sm"
           >
             <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
             Reglas
             {rules.length > 0 && (
-              <span className="text-xs text-gray-400 font-normal">{rules.length}</span>
+              <span className="ml-0.5 bg-gray-100 text-gray-600 text-xs font-semibold px-1.5 py-0.5 rounded">{rules.length}</span>
             )}
           </button>
         </div>
+      </div>
+
+      {/* Stats strip */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatChip label="Total" value={stats.total} tone="neutral" />
+        <StatChip label="Competidor más barato" value={stats.cheaper} tone="red" />
+        <StatChip label="Competidor más caro" value={stats.pricier} tone="blue" />
+        <StatChip label="Cambios" value={stats.changed} tone="amber" />
       </div>
 
       {/* History */}
@@ -52,7 +77,7 @@ export default function AlertasLayout({ rules, alerts, skus, unreadCount }: Prop
 
       {/* Rules panel */}
       {showRules && (
-        <div className="fixed inset-0 z-40" onClick={() => setShowRules(false)}>
+        <div className="fixed inset-0 z-40 bg-black/20 backdrop-blur-[1px]" onClick={() => setShowRules(false)}>
           <div
             className="absolute top-0 right-0 h-full w-full max-w-lg bg-white shadow-2xl flex flex-col"
             onClick={e => e.stopPropagation()}
@@ -72,6 +97,24 @@ export default function AlertasLayout({ rules, alerts, skus, unreadCount }: Prop
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function StatChip({ label, value, tone }: { label: string; value: number; tone: 'neutral' | 'red' | 'blue' | 'amber' }) {
+  const toneStyles = {
+    neutral: { dot: 'bg-gray-400', value: 'text-gray-900' },
+    red: { dot: 'bg-red-500', value: 'text-red-600' },
+    blue: { dot: 'bg-blue-500', value: 'text-blue-600' },
+    amber: { dot: 'bg-amber-500', value: 'text-amber-600' },
+  }[tone]
+  return (
+    <div className="bg-white border border-gray-100 rounded-xl px-4 py-3 flex items-center gap-3">
+      <span className={`w-2 h-2 rounded-full ${toneStyles.dot} shrink-0`} />
+      <div className="min-w-0">
+        <p className="text-[11px] uppercase tracking-wider text-gray-400 font-medium">{label}</p>
+        <p className={`text-xl font-bold ${toneStyles.value} leading-tight`}>{value}</p>
+      </div>
     </div>
   )
 }

@@ -11,7 +11,7 @@ export async function GET(
   const [activeRes, anyRes, competitorsRes] = await Promise.all([
     admin
       .from('ml_products')
-      .select('id, title, sku, price, catalog_price, buybox_price, status, thumbnail, permalink, currency_id, available_quantity, pictures')
+      .select('id, title, sku, price, sale_price, catalog_price, buybox_price, status, thumbnail, permalink, currency_id, available_quantity, pictures')
       .eq('sku', sku)
       .eq('status', 'active')
       .order('synced_at', { ascending: false })
@@ -19,7 +19,7 @@ export async function GET(
       .maybeSingle(),
     admin
       .from('ml_products')
-      .select('id, title, sku, price, catalog_price, buybox_price, status, thumbnail, permalink, currency_id, available_quantity, pictures')
+      .select('id, title, sku, price, sale_price, catalog_price, buybox_price, status, thumbnail, permalink, currency_id, available_quantity, pictures')
       .eq('sku', sku)
       .order('synced_at', { ascending: false })
       .limit(1)

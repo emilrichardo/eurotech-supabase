@@ -11,7 +11,7 @@ export default async function ProductosPage() {
     supabase
       .from('ml_products')
       .select(
-        `id, title, subtitle, sku, price, catalog_price, buybox_price, buybox_seller_id, base_price, original_price, currency_id,
+        `id, title, subtitle, sku, price, sale_price, catalog_price, buybox_price, buybox_seller_id, base_price, original_price, currency_id,
          available_quantity, sold_quantity, initial_quantity,
          status, condition, listing_type_id, buying_mode,
          thumbnail, permalink, category_id, domain_id,

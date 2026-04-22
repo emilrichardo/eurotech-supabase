@@ -53,11 +53,12 @@ export default async function AlertasPage() {
     return true
   })
   console.log(`[alertas] rules=${rules.length} alerts=${alerts.length}`)
-  const skus = Array.from(
-    new Map(
-      (skusRes.data ?? []).map(p => [p.sku, { sku: p.sku as string, title: p.title }])
-    ).values()
-  )
+  // Quedarse con el título del listing más reciente (el primero que aparezca por SKU)
+  const skuTitles = new Map<string, string>()
+  for (const p of skusRes.data ?? []) {
+    if (!skuTitles.has(p.sku)) skuTitles.set(p.sku, p.title)
+  }
+  const skus = Array.from(skuTitles.entries()).map(([sku, title]) => ({ sku, title }))
 
   const unreadCount = alerts.filter(a => !a.read_at).length
 

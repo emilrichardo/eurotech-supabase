@@ -31,6 +31,7 @@ type Product = {
   subtitle: string | null
   sku: string | null
   price: number | null
+  sale_price: number | null
   catalog_price: number | null
   buybox_price: number | null
   buybox_seller_id: number | null
@@ -556,8 +557,11 @@ export default function ProductsTable({
                     </td>
                     <td className="px-4 py-3 text-xs font-mono text-gray-600">{p.sku ?? '—'}</td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
-                      <p className="font-medium text-gray-900">{formatPrice(p.catalog_price ?? p.price, p.currency_id)}</p>
-                      {p.catalog_price != null && p.price != null && p.catalog_price !== p.price && (
+                      <p className={`font-medium ${p.sale_price != null ? 'text-emerald-600' : 'text-gray-900'}`}>{formatPrice(p.sale_price ?? p.catalog_price ?? p.price, p.currency_id)}</p>
+                      {p.sale_price != null && p.price != null && p.sale_price !== p.price && (
+                        <p className="text-xs text-gray-400 line-through">{formatPrice(p.price, p.currency_id)}</p>
+                      )}
+                      {p.sale_price == null && p.catalog_price != null && p.price != null && p.catalog_price !== p.price && (
                         <p className="text-xs text-gray-400">pub. {formatPrice(p.price, p.currency_id)}</p>
                       )}
                     </td>
@@ -618,8 +622,11 @@ export default function ProductsTable({
                   <p className="text-xs text-gray-400 mt-0.5 font-mono">{p.sku ?? p.id}</p>
                 </div>
                 <div className="text-right shrink-0">
-                  <p className="font-semibold text-gray-900">{formatPrice(p.catalog_price ?? p.price, p.currency_id)}</p>
-                  {p.catalog_price != null && p.price != null && p.catalog_price !== p.price && (
+                  <p className={`font-semibold ${p.sale_price != null ? 'text-emerald-600' : 'text-gray-900'}`}>{formatPrice(p.sale_price ?? p.catalog_price ?? p.price, p.currency_id)}</p>
+                  {p.sale_price != null && p.price != null && p.sale_price !== p.price && (
+                    <p className="text-xs text-gray-400 line-through">{formatPrice(p.price, p.currency_id)}</p>
+                  )}
+                  {p.sale_price == null && p.catalog_price != null && p.price != null && p.catalog_price !== p.price && (
                     <p className="text-xs text-gray-400">pub. {formatPrice(p.price, p.currency_id)}</p>
                   )}
                   {losingBuybox && p.buybox_price != null && (
@@ -681,13 +688,16 @@ export default function ProductsTable({
                   {p.sku && <p className="text-xs text-gray-400 font-mono mt-1">{p.sku}</p>}
                   <div className="mt-2 flex items-center justify-between gap-1">
                     <div>
-                      <span className="text-sm font-semibold text-gray-900">{formatPrice(p.catalog_price ?? p.price, p.currency_id)}</span>
+                      <span className={`text-sm font-semibold ${p.sale_price != null ? 'text-emerald-600' : 'text-gray-900'}`}>{formatPrice(p.sale_price ?? p.catalog_price ?? p.price, p.currency_id)}</span>
                       {losingBuybox && p.buybox_price != null ? (
                         <span className="ml-1.5 text-xs text-red-500 font-medium" title="Buy-box ganado por rival">
                           rival: {formatPrice(p.buybox_price, p.currency_id)}
                         </span>
                       ) : null}
-                      {p.catalog_price != null && p.price != null && p.catalog_price !== p.price && (
+                      {p.sale_price != null && p.price != null && p.sale_price !== p.price && (
+                        <p className="text-xs text-gray-400 mt-0.5 line-through">{formatPrice(p.price, p.currency_id)}</p>
+                      )}
+                      {p.sale_price == null && p.catalog_price != null && p.price != null && p.catalog_price !== p.price && (
                         <p className="text-xs text-gray-400 mt-0.5">pub. {formatPrice(p.price, p.currency_id)}</p>
                       )}
                     </div>
@@ -745,11 +755,12 @@ export default function ProductsTable({
         const comps = selected ? (localCompetitors[skuKey] ?? []) : []
         const compCount = comps.length
         const pubPrice = selected?.price ?? null
+        const salePrice = selected?.sale_price ?? null
         const catPrice = selected?.catalog_price ?? null
         const buyboxPrice = selected?.buybox_price ?? null
         // buybox is a competitor's price when it differs from our catalog price
         const buyboxIsCompetitor = buyboxPrice != null && buyboxPrice !== catPrice
-        const refPrice = catPrice ?? pubPrice // primary reference for comparisons
+        const refPrice = salePrice ?? catPrice ?? pubPrice // primary reference for comparisons
 
         // Build unified sorted list for competitor views
         type PriceEntry = {
@@ -757,12 +768,25 @@ export default function ProductsTable({
           label: string
           price: number
           isOurs: boolean
-          oursType?: 'pub' | 'cat'
+          oursType?: 'pub' | 'cat' | 'sale'
           comp?: Competitor
         }
+        const ourPrice = salePrice ?? catPrice ?? pubPrice
+        const ourPriceType: 'sale' | 'cat' | 'pub' | null =
+          salePrice != null ? 'sale' : catPrice != null ? 'cat' : pubPrice != null ? 'pub' : null
         const allEntries: PriceEntry[] = []
-        if (catPrice != null) allEntries.push({ key: 'our-cat', label: 'Mi precio catálogo', price: catPrice, isOurs: true, oursType: 'cat' })
-        else if (pubPrice != null) allEntries.push({ key: 'our-pub', label: 'Mi precio publicación', price: pubPrice, isOurs: true, oursType: 'pub' })
+        if (ourPrice != null) {
+          allEntries.push({
+            key: 'our',
+            label:
+              ourPriceType === 'sale' ? 'Mi precio oferta' :
+              ourPriceType === 'cat'  ? 'Mi precio catálogo' :
+                                        'Mi precio publicación',
+            price: ourPrice,
+            isOurs: true,
+            oursType: ourPriceType === 'sale' ? 'sale' : ourPriceType === 'cat' ? 'cat' : 'pub',
+          })
+        }
         for (const c of comps) {
           if (c.price != null) allEntries.push({ key: c.id, label: c.title ?? c.id, price: c.price, isOurs: false, comp: c })
         }
@@ -831,18 +855,35 @@ export default function ProductsTable({
                       )}
                     </div>
                     <div className="border-t border-gray-50 pt-2 space-y-1">
-                      {catPrice != null ? (
+                      {salePrice != null ? (
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-xs text-emerald-600 font-medium">Oferta</span>
+                          <span className="text-lg font-bold text-emerald-600">{formatPrice(salePrice, selected.currency_id)}</span>
+                        </div>
+                      ) : catPrice != null ? (
                         <div className="flex items-baseline justify-between">
                           <span className="text-xs text-gray-400">Precio cat.</span>
                           <span className="text-lg font-bold text-blue-700">{formatPrice(catPrice, selected.currency_id)}</span>
                         </div>
                       ) : (
                         <div className="flex items-baseline justify-between">
-                          <span className="text-xs text-gray-400">Precio cat.</span>
+                          <span className="text-xs text-gray-400">Precio</span>
                           <span className="text-lg font-bold text-gray-900">{formatPrice(pubPrice, selected.currency_id)}</span>
                         </div>
                       )}
-                      {pubPrice != null && catPrice != null && pubPrice !== catPrice && (
+                      {salePrice != null && catPrice != null && catPrice !== salePrice && (
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-xs text-gray-400">Precio cat.</span>
+                          <span className="text-xs text-blue-600">{formatPrice(catPrice, selected.currency_id)}</span>
+                        </div>
+                      )}
+                      {pubPrice != null && salePrice != null && pubPrice !== salePrice && (
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-xs text-gray-300">Lista</span>
+                          <span className="text-xs text-gray-400 line-through">{formatPrice(pubPrice, selected.currency_id)}</span>
+                        </div>
+                      )}
+                      {pubPrice != null && salePrice == null && catPrice != null && pubPrice !== catPrice && (
                         <div className="flex items-baseline justify-between">
                           <span className="text-xs text-gray-300">Pub.</span>
                           <span className="text-xs text-gray-400">{formatPrice(pubPrice, selected.currency_id)}</span>
@@ -918,9 +959,20 @@ export default function ProductsTable({
                     </div>
 
                     {/* Reference prices banner */}
-                    {(catPrice != null || buyboxPrice != null || pubPrice != null) && (
+                    {(salePrice != null || catPrice != null || buyboxPrice != null || pubPrice != null) && (
                       <div className="grid grid-cols-2 gap-2">
-                        {catPrice != null ? (
+                        {salePrice != null ? (
+                          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-center">
+                            <p className="text-xs text-emerald-600 font-medium mb-0.5">Mi oferta 🏆</p>
+                            <p className="text-base font-bold text-emerald-700">{formatPrice(salePrice, selected.currency_id)}</p>
+                            {catPrice != null && catPrice !== salePrice && (
+                              <p className="text-xs text-gray-400 mt-0.5">cat. {formatPrice(catPrice, selected.currency_id)}</p>
+                            )}
+                            {catPrice == null && pubPrice != null && pubPrice !== salePrice && (
+                              <p className="text-xs text-gray-400 mt-0.5 line-through">{formatPrice(pubPrice, selected.currency_id)}</p>
+                            )}
+                          </div>
+                        ) : catPrice != null ? (
                           <div className={`rounded-xl p-3 text-center border ${buyboxIsCompetitor ? 'bg-blue-50 border-blue-200' : 'bg-green-50 border-green-200'}`}>
                             <p className={`text-xs mb-0.5 ${buyboxIsCompetitor ? 'text-blue-400' : 'text-green-500'}`}>
                               Mi precio cat.{!buyboxIsCompetitor && ' 🏆'}
@@ -977,7 +1029,9 @@ export default function ProductsTable({
                                 className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
                                   isPaused ? 'bg-gray-50 border-gray-100 opacity-50'
                                     : entry.isOurs
-                                    ? entry.oursType === 'cat' ? 'bg-blue-50 border-blue-300 shadow-sm' : 'bg-gray-50 border-gray-300 shadow-sm'
+                                    ? entry.oursType === 'sale' ? 'bg-emerald-50 border-emerald-300 shadow-sm'
+                                    : entry.oursType === 'cat' ? 'bg-blue-50 border-blue-300 shadow-sm'
+                                    : 'bg-gray-50 border-gray-300 shadow-sm'
                                     : 'bg-white border-gray-100'
                                 }`}
                               >
@@ -987,8 +1041,16 @@ export default function ProductsTable({
                                     : <span className="text-sm font-bold text-gray-400">{idx + 1}</span>}
                                 </div>
                                 {entry.isOurs ? (
-                                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${entry.oursType === 'cat' ? 'bg-blue-200' : 'bg-gray-200'}`}>
-                                    <svg className={`w-4 h-4 ${entry.oursType === 'cat' ? 'text-blue-600' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                                    entry.oursType === 'sale' ? 'bg-emerald-200' :
+                                    entry.oursType === 'cat' ? 'bg-blue-200' :
+                                    'bg-gray-200'
+                                  }`}>
+                                    <svg className={`w-4 h-4 ${
+                                      entry.oursType === 'sale' ? 'text-emerald-700' :
+                                      entry.oursType === 'cat' ? 'text-blue-600' :
+                                      'text-gray-500'
+                                    }`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
                                   </div>
                                 ) : entry.comp?.thumbnail ? (
                                   <Image src={imgUrl(entry.comp.thumbnail)!} alt="" width={36} height={36} className="w-9 h-9 rounded-lg object-contain bg-gray-50 shrink-0" unoptimized />
@@ -996,19 +1058,31 @@ export default function ProductsTable({
                                   <div className="w-9 h-9 rounded-lg bg-gray-100 shrink-0" />
                                 )}
                                 <div className="flex-1 min-w-0">
-                                  <p className={`text-sm font-medium line-clamp-1 ${entry.isOurs ? (entry.oursType === 'cat' ? 'text-blue-700' : 'text-gray-600') : isPaused ? 'text-gray-400' : 'text-gray-900'}`}>
+                                  <p className={`text-sm font-medium line-clamp-1 ${
+                                    entry.isOurs
+                                      ? entry.oursType === 'sale' ? 'text-emerald-700'
+                                      : entry.oursType === 'cat' ? 'text-blue-700'
+                                      : 'text-gray-600'
+                                      : isPaused ? 'text-gray-400' : 'text-gray-900'
+                                  }`}>
                                     {entry.label}
                                   </p>
                                   <p className="text-xs text-gray-400">
                                     {entry.isOurs
-                                      ? (entry.oursType === 'cat' ? 'Nuestro — catálogo' : 'Nuestro')
+                                      ? entry.oursType === 'sale' ? 'Nuestro — oferta'
+                                      : entry.oursType === 'cat' ? 'Nuestro — catálogo'
+                                      : 'Nuestro'
                                       : isPaused
                                         ? 'Pausado'
                                         : (entry.comp?.seller_name ?? 'Competidor')}
                                   </p>
                                 </div>
                                 <div className="text-right shrink-0">
-                                  <p className={`text-base font-bold ${entry.isOurs && entry.oursType === 'cat' ? 'text-blue-700' : isPaused ? 'text-gray-400' : 'text-gray-900'}`}>
+                                  <p className={`text-base font-bold ${
+                                    entry.isOurs && entry.oursType === 'sale' ? 'text-emerald-700' :
+                                    entry.isOurs && entry.oursType === 'cat' ? 'text-blue-700' :
+                                    isPaused ? 'text-gray-400' : 'text-gray-900'
+                                  }`}>
                                     {formatPrice(entry.price, selected?.currency_id ?? null)}
                                   </p>
                                   {!entry.isOurs && entry.comp?.usd_price != null && (
@@ -1092,6 +1166,19 @@ export default function ProductsTable({
                       <InfoRow label="Categoría" value={selected.category_id} />
                       <InfoRow label="Dominio" value={selected.domain_id} />
                       <InfoRow label="Precio publicación" value={formatPrice(selected.price, selected.currency_id)} />
+                      {selected.sale_price != null && (
+                        <div className="flex justify-between gap-4 py-3 border-b border-gray-50">
+                          <span className="text-sm text-gray-400 shrink-0">Precio oferta ML</span>
+                          <span className="text-sm font-medium text-right">
+                            <span className="text-emerald-600">{formatPrice(selected.sale_price, selected.currency_id)}</span>
+                            {selected.price != null && selected.sale_price < selected.price && (
+                              <span className="ml-1.5 text-xs text-emerald-500">
+                                (−{((selected.price - selected.sale_price) / selected.price * 100).toFixed(1)}%)
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      )}
                       {selected.catalog_price != null && (
                         <div className="flex justify-between gap-4 py-3 border-b border-gray-50">
                           <span className="text-sm text-gray-400 shrink-0">Precio catálogo ML</span>

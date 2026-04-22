@@ -10,7 +10,8 @@ export default function SyncButton() {
     setState('running')
     setMsg(null)
     try {
-      // sync-catalog toma mucho tiempo (700+ productos) — disparar sin esperar
+      // ml-sync + sync-catalog toman 1-2 min cada uno — disparar sin esperar
+      fetch('/api/sync-own', { method: 'POST' }).catch(() => {})
       fetch('/api/sync-catalog', { method: 'POST' }).catch(() => {})
 
       // sync-competitors es rápido — esperar resultado
@@ -23,7 +24,7 @@ export default function SyncButton() {
           : comp.alerts_fired > 0
             ? ` · ${comp.alerts_fired} alerta(s)`
             : ''
-        setMsg(`Rivales: ${comp.updated ?? 0}/${comp.total ?? 0}${alertPart} · Catálogo actualizándose...`)
+        setMsg(`Rivales: ${comp.updated ?? 0}/${comp.total ?? 0}${alertPart} · Propios y catálogo actualizándose...`)
         setState('done')
         setTimeout(() => window.location.reload(), 1500)
       } else {

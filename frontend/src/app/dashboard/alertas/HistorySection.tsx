@@ -28,6 +28,7 @@ type PanelData = {
     title: string
     sku: string | null
     price: number | null
+    sale_price: number | null
     catalog_price: number | null
     buybox_price: number | null
     status: string | null
@@ -60,11 +61,17 @@ function formatPrice(price: number | null, currency?: string | null) {
   }).format(price)
 }
 
-function formatDate(dateStr: string) {
-  return new Intl.DateTimeFormat('es-AR', {
-    day: '2-digit', month: '2-digit', year: '2-digit',
-    hour: '2-digit', minute: '2-digit',
-  }).format(new Date(dateStr))
+function formatRelative(dateStr: string) {
+  const d = new Date(dateStr)
+  const diff = Date.now() - d.getTime()
+  const mins = Math.floor(diff / 60_000)
+  if (mins < 1) return 'ahora'
+  if (mins < 60) return `hace ${mins} min`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `hace ${hrs}h`
+  const days = Math.floor(hrs / 24)
+  if (days < 7) return `hace ${days}d`
+  return new Intl.DateTimeFormat('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' }).format(d)
 }
 
 function imgUrl(thumbnail: string | null) {
@@ -103,12 +110,10 @@ export default function HistorySection({
   const skuMap = new Map(skus.map(s => [s.sku, s.title]))
 
   const visible = alerts.filter(a => {
-    if (!skuMap.has(a.our_sku)) return false  // ocultar si el producto no está activo
+    if (!skuMap.has(a.our_sku)) return false
     if (filter === 'unread' && a.read_at) return false
     if (filterSku && a.our_sku !== filterSku) return false
     if (filterRule && a.ml_price_alert_rules?.id !== filterRule) return false
-    // Ocultar alertas donde el precio catálogo propio ya es más barato que el competidor
-    // Solo aplica a reglas donde el competidor es más barato que nosotros
     const ruleType = a.ml_price_alert_rules?.rule_type ?? ''
     const isCompetitorCheaperRule = ruleType === 'competitor_cheaper' || ruleType === 'price_diff_pct_above' || ruleType === 'price_changed' || ruleType === ''
     if (filterCatalogCheaper && isCompetitorCheaperRule && a.catalog_price != null && a.competitor_price_after != null && a.catalog_price <= a.competitor_price_after) return false
@@ -116,6 +121,7 @@ export default function HistorySection({
   })
 
   const unreadCount = alerts.filter(a => !a.read_at && skuMap.has(a.our_sku)).length
+  const hasActiveFilters = filter !== 'unread' || !!filterSku || !!filterRule || !filterCatalogCheaper
 
   useEffect(() => {
     if (!panelSku) { setPanelData(null); return }
@@ -151,20 +157,28 @@ export default function HistorySection({
     await fetch(`/api/alert-history/${id}`, { method: 'DELETE' })
   }
 
+  function resetFilters() {
+    setFilter('unread')
+    setFilterSku('')
+    setFilterRule('')
+    setFilterCatalogCheaper(true)
+  }
+
   // Build sorted price list for panel
   const panelEntries = (() => {
     if (!panelData?.product) return []
-    const { price: pubPrice, catalog_price: catPrice, currency_id } = panelData.product
-    type Entry = { key: string; label: string; price: number; isOurs: boolean; oursType?: 'pub' | 'cat'; usd_price?: number | null; thumbnail?: string | null; permalink?: string | null; seller?: string | null }
+    const { price: pubPrice, sale_price: salePrice, catalog_price: catPrice, currency_id } = panelData.product
+    type Entry = { key: string; label: string; price: number; isOurs: boolean; oursType?: 'pub' | 'cat' | 'sale'; usd_price?: number | null; thumbnail?: string | null; permalink?: string | null; seller?: string | null }
     const entries: Entry[] = []
     if (catPrice != null) entries.push({ key: 'our-cat', label: 'Mi precio catálogo', price: catPrice, isOurs: true, oursType: 'cat' })
+    else if (salePrice != null) entries.push({ key: 'our-sale', label: 'Mi precio oferta', price: salePrice, isOurs: true, oursType: 'sale' })
     else if (pubPrice != null) entries.push({ key: 'our-pub', label: 'Mi precio', price: pubPrice, isOurs: true, oursType: 'pub' })
     for (const c of panelData.competitors) {
       if (c.price != null && !c.paused) {
         entries.push({ key: c.id, label: c.seller_name ?? c.title ?? c.id, price: c.price, isOurs: false, usd_price: c.usd_price, thumbnail: c.thumbnail, permalink: c.permalink, seller: c.seller_name })
       }
     }
-    const refPrice = catPrice ?? pubPrice
+    const refPrice = catPrice ?? salePrice ?? pubPrice
     return entries
       .sort((a, b) => a.price - b.price)
       .map(e => ({
@@ -176,88 +190,110 @@ export default function HistorySection({
 
   return (
     <section>
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-        <h2 className="text-lg font-semibold text-gray-900">
-          Historial
-          {unreadCount > 0 && (
-            <span className="ml-2 bg-red-100 text-red-600 text-xs font-bold px-2 py-0.5 rounded-full">{unreadCount} nuevas</span>
-          )}
-        </h2>
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Rule filter */}
-          {rules.length > 0 && (
-            <select
-              value={filterRule}
-              onChange={e => setFilterRule(e.target.value)}
-              className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
-            >
-              <option value="">Todas las reglas</option>
-              {rules.map(r => (
-                <option key={r.id} value={r.id}>{r.name}</option>
-              ))}
-            </select>
-          )}
-
-          {/* SKU filter */}
-          <select
-            value={filterSku}
-            onChange={e => setFilterSku(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
-          >
-            <option value="">Todos los SKU</option>
-            {skus.map(s => (
-              <option key={s.sku} value={s.sku}>{s.sku}</option>
-            ))}
-          </select>
-
-          {/* Catalog price filter */}
-          <label className="flex items-center gap-1.5 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={filterCatalogCheaper}
-              onChange={e => setFilterCatalogCheaper(e.target.checked)}
-              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-400"
-            />
-            <span className="text-sm text-gray-600">Ocultar si mi catálogo es más barato</span>
-          </label>
-
-          {/* Read/all filter */}
-          <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+      {/* Toolbar */}
+      <div className="bg-white border border-gray-100 rounded-xl mb-4 overflow-hidden">
+        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-gray-100">
+          {/* Read/all segmented toggle */}
+          <div className="flex rounded-lg bg-gray-50 p-0.5 shrink-0">
             <button
               onClick={() => setFilter('unread')}
-              className={`px-3 py-1.5 text-sm font-medium transition-colors ${filter === 'unread' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+              className={`relative px-3 py-1 text-xs font-medium rounded-md transition-all ${filter === 'unread' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
             >
               No leídas
+              {unreadCount > 0 && (
+                <span className={`ml-1.5 text-[10px] font-semibold px-1.5 rounded ${filter === 'unread' ? 'bg-red-100 text-red-600' : 'bg-gray-200 text-gray-500'}`}>{unreadCount}</span>
+              )}
             </button>
             <button
               onClick={() => setFilter('all')}
-              className={`px-3 py-1.5 text-sm font-medium border-l border-gray-200 transition-colors ${filter === 'all' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+              className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${filter === 'all' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
             >
               Todas
             </button>
           </div>
 
-          {visible.some(a => !a.read_at) && (
-            <button onClick={markAllRead} className="text-sm text-blue-600 hover:text-blue-800 font-medium">
-              Marcar todas leídas
+          <div className="h-5 w-px bg-gray-200 mx-1 shrink-0" />
+
+          {rules.length > 0 && (
+            <select
+              value={filterRule}
+              onChange={e => setFilterRule(e.target.value)}
+              className="bg-transparent border-0 text-xs text-gray-700 font-medium focus:outline-none focus:ring-0 pr-7 py-1 cursor-pointer hover:text-gray-900"
+            >
+              <option value="">Todas las reglas</option>
+              {rules.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+          )}
+
+          <select
+            value={filterSku}
+            onChange={e => setFilterSku(e.target.value)}
+            className="bg-transparent border-0 text-xs text-gray-700 font-medium focus:outline-none focus:ring-0 pr-7 py-1 cursor-pointer hover:text-gray-900"
+          >
+            <option value="">Todos los SKU</option>
+            {skus.map(s => <option key={s.sku} value={s.sku}>{s.sku}</option>)}
+          </select>
+
+          <label className="flex items-center gap-1.5 cursor-pointer select-none pl-2 border-l border-gray-200 ml-1">
+            <input
+              type="checkbox"
+              checked={filterCatalogCheaper}
+              onChange={e => setFilterCatalogCheaper(e.target.checked)}
+              className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 focus:ring-0 focus:ring-offset-0"
+            />
+            <span className="text-xs text-gray-600">Ocultar si mi catálogo ya es más barato</span>
+          </label>
+
+          <div className="flex-1" />
+
+          {hasActiveFilters && (
+            <button
+              onClick={resetFilters}
+              className="text-[11px] text-gray-400 hover:text-gray-700 font-medium px-2 py-1 rounded hover:bg-gray-50"
+            >
+              Limpiar filtros
             </button>
           )}
-          {alerts.some(a => a.read_at) && (
-            <button onClick={deleteRead} disabled={deletingRead} className="text-sm text-gray-400 hover:text-red-500 transition-colors">
-              Limpiar leídas
-            </button>
-          )}
+        </div>
+
+        <div className="flex items-center justify-between px-4 py-2 bg-gray-50/50 text-xs text-gray-500">
+          <span>
+            {visible.length} {visible.length === 1 ? 'alerta' : 'alertas'}
+            {visible.length !== alerts.length && (
+              <span className="text-gray-400"> de {alerts.length}</span>
+            )}
+          </span>
+          <div className="flex items-center gap-3">
+            {visible.some(a => !a.read_at) && (
+              <button onClick={markAllRead} className="text-blue-600 hover:text-blue-800 font-medium">
+                Marcar todas leídas
+              </button>
+            )}
+            {alerts.some(a => a.read_at) && (
+              <button onClick={deleteRead} disabled={deletingRead} className="text-gray-400 hover:text-red-500 transition-colors">
+                Limpiar leídas
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
       {visible.length === 0 ? (
-        <div className="bg-white border border-gray-100 rounded-xl p-10 text-center">
-          <p className="text-gray-400 text-sm">
-            {filter === 'unread' ? 'No hay alertas sin leer.' : 'No hay alertas registradas.'}
+        <div className="bg-white border border-gray-100 rounded-xl p-16 text-center">
+          <div className="w-12 h-12 rounded-full bg-gray-50 mx-auto mb-3 flex items-center justify-center">
+            <svg className="w-6 h-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <p className="text-sm font-medium text-gray-700">
+            {filter === 'unread' ? 'Todo al día' : 'Sin alertas registradas'}
+          </p>
+          <p className="text-xs text-gray-400 mt-1">
+            {filter === 'unread' ? 'No hay alertas sin leer.' : 'Cuando se disparen alertas aparecerán aquí.'}
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {visible.map(alert => {
             const isRead = !!alert.read_at
             const priceWentDown = alert.competitor_price_after != null && alert.competitor_price_before != null
@@ -268,119 +304,134 @@ export default function HistorySection({
             const isCheaper = ruleType === 'competitor_cheaper' || ruleType === 'price_diff_pct_above'
             const isPricier = ruleType === 'competitor_pricier' || ruleType === 'price_diff_pct_below'
 
-            // Icon + colors per alert type
-            const alertIcon = (() => {
-              if (isCheaper) return (
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m0 0l-5-5m5 5l5-5" />
-                </svg>
-              )
-              if (isPricier) return (
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 20V4m0 0l-5 5m5-5l5 5" />
-                </svg>
-              )
-              return (
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4" />
-                </svg>
-              )
-            })()
+            const tone = isRead ? 'read' : isCheaper ? 'cheaper' : isPricier ? 'pricier' : 'changed'
+            const toneConfig = {
+              read: { border: 'border-l-gray-200', badge: 'bg-gray-50 text-gray-400', accent: 'text-gray-500' },
+              cheaper: { border: 'border-l-red-500', badge: 'bg-red-50 text-red-600', accent: 'text-red-600' },
+              pricier: { border: 'border-l-blue-500', badge: 'bg-blue-50 text-blue-600', accent: 'text-blue-600' },
+              changed: { border: 'border-l-amber-500', badge: 'bg-amber-50 text-amber-600', accent: 'text-amber-600' },
+            }[tone]
 
-            const iconClasses = isRead
-              ? 'bg-gray-100 text-gray-400'
-              : isCheaper
-                ? 'bg-red-100 text-red-500'
-                : isPricier
-                  ? 'bg-blue-100 text-blue-500'
-                  : 'bg-amber-100 text-amber-500'
-
-            const cardClasses = isRead
-              ? 'opacity-60 border-gray-100'
-              : isCheaper
-                ? 'border-red-200 bg-red-50/30'
-                : isPricier
-                  ? 'border-blue-200 bg-blue-50/20'
-                  : 'border-amber-200 bg-amber-50/20'
+            const thumb = imgUrl(alert.ml_competitor_items?.thumbnail ?? null)
 
             return (
               <div
                 key={alert.id}
                 onClick={() => setPanelSku(isActive ? null : alert.our_sku)}
-                className={`bg-white border rounded-xl px-5 py-4 flex items-start gap-4 transition-all cursor-pointer ${cardClasses} ${isActive ? 'ring-2 ring-blue-400' : 'hover:border-gray-300 hover:shadow-sm'}`}
+                className={`group relative bg-white border border-gray-100 border-l-4 ${toneConfig.border} rounded-xl transition-all cursor-pointer hover:shadow-md hover:border-gray-200 ${isActive ? 'ring-2 ring-blue-400 ring-offset-1' : ''} ${isRead ? 'opacity-70' : ''}`}
               >
-                {/* Type icon */}
-                <div className={`mt-0.5 w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${iconClasses}`}>
-                  {alertIcon}
-                </div>
-
-                <div className="flex-1 min-w-0 space-y-2">
-                  {/* Product */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono text-xs bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded">{alert.our_sku}</span>
-                    {skuMap.get(alert.our_sku) && (
-                      <span className="text-sm font-semibold text-gray-900 line-clamp-1">{skuMap.get(alert.our_sku)}</span>
+                <div className="flex gap-3 p-4">
+                  {/* Thumb or indicator */}
+                  <div className="shrink-0">
+                    {thumb ? (
+                      <div className="relative w-12 h-12 rounded-lg overflow-hidden bg-gray-50 border border-gray-100">
+                        <Image src={thumb} alt="" fill className="object-contain" unoptimized />
+                      </div>
+                    ) : (
+                      <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${toneConfig.badge}`}>
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          {isCheaper && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M12 4v16m0 0l-5-5m5 5l5-5" />}
+                          {isPricier && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M12 20V4m0 0l-5 5m5-5l5 5" />}
+                          {!isCheaper && !isPricier && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />}
+                        </svg>
+                      </div>
                     )}
                   </div>
 
-                  {/* Rule + competitor */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {alert.ml_price_alert_rules && (
-                      <RuleTypeBadge
-                        ruleType={alert.ml_price_alert_rules.rule_type}
-                        thresholdPct={alert.diff_pct != null ? Math.abs(alert.diff_pct) : null}
-                      />
-                    )}
-                    {alert.ml_price_alert_rules && (
-                      <span className="text-xs text-gray-400">"{alert.ml_price_alert_rules.name}"</span>
-                    )}
-                    {(alert.ml_competitor_items?.seller_name || alert.ml_competitor_items?.title) && (
-                      <>
-                        <span className="text-xs text-gray-300">vs.</span>
-                        <span className="text-xs font-medium text-gray-600">
-                          {alert.ml_competitor_items?.seller_name ?? alert.ml_competitor_items?.title}
-                        </span>
-                      </>
-                    )}
-                  </div>
-
-                  {/* Prices */}
-                  <div className="flex items-center gap-4 flex-wrap">
-                    <div className="flex items-center gap-2">
-                      {alert.competitor_price_before != null && (
-                        <span className="text-gray-400 line-through text-sm">{formatPrice(alert.competitor_price_before)}</span>
-                      )}
-                      <span className="text-gray-300 text-xs">→</span>
-                      <span className={`text-base font-bold ${priceWentDown ? 'text-red-600' : 'text-green-600'}`}>
-                        {formatPrice(alert.competitor_price_after)}
-                      </span>
+                  {/* Main content */}
+                  <div className="flex-1 min-w-0">
+                    {/* Row 1: SKU + Title + time */}
+                    <div className="flex items-baseline gap-2 min-w-0">
+                      <span className="font-mono text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded shrink-0">{alert.our_sku}</span>
+                      <h3 className="text-sm font-semibold text-gray-900 truncate flex-1">
+                        {skuMap.get(alert.our_sku) ?? alert.our_sku}
+                      </h3>
+                      <span className="text-[11px] text-gray-400 shrink-0">{formatRelative(alert.fired_at)}</span>
                     </div>
-                    {alert.our_price != null && (
-                      <span className="text-sm text-gray-500">Nuestro: <span className="font-medium text-gray-700">{formatPrice(alert.our_price)}</span></span>
-                    )}
-                    {diff != null && (
-                      <span className={`text-sm font-semibold px-2 py-0.5 rounded-full ${diff < 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'}`}>
-                        {diff < 0 ? `${diff.toFixed(1)}%` : `+${diff.toFixed(1)}%`}
-                      </span>
-                    )}
-                    <span className="text-xs text-gray-300 ml-auto">{formatDate(alert.fired_at)}</span>
+
+                    {/* Row 2: rule + competitor */}
+                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                      {alert.ml_price_alert_rules && (
+                        <RuleTypeBadge
+                          ruleType={alert.ml_price_alert_rules.rule_type}
+                          thresholdPct={alert.diff_pct != null ? Math.abs(alert.diff_pct) : null}
+                        />
+                      )}
+                      {(alert.ml_competitor_items?.seller_name || alert.ml_competitor_items?.title) && (
+                        <span className="inline-flex items-center gap-1 text-xs text-gray-600">
+                          <svg className="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                          </svg>
+                          <span className="truncate max-w-55">{alert.ml_competitor_items?.seller_name ?? alert.ml_competitor_items?.title}</span>
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Row 3: Prices */}
+                    <div className="flex items-end gap-6 mt-3 flex-wrap">
+                      {/* Competitor price block */}
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-0.5">Competidor</p>
+                        <div className="flex items-baseline gap-2">
+                          {alert.competitor_price_before != null && (
+                            <span className="text-gray-400 line-through text-xs">{formatPrice(alert.competitor_price_before)}</span>
+                          )}
+                          <span className={`text-base font-bold ${priceWentDown ? 'text-red-600' : 'text-green-600'}`}>
+                            {formatPrice(alert.competitor_price_after)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Our price */}
+                      {alert.our_price != null && (
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-0.5">Nuestro</p>
+                          <span className="text-base font-semibold text-gray-700">{formatPrice(alert.our_price)}</span>
+                        </div>
+                      )}
+
+                      {/* Diff pill */}
+                      {diff != null && (
+                        <div className="ml-auto">
+                          <span className={`inline-flex items-center gap-1 text-sm font-bold px-2.5 py-1 rounded-lg ${diff < 0 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>
+                            {diff < 0 ? (
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 14l-7 7m0 0l-7-7m7 7V3" /></svg>
+                            ) : (
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 10l7-7m0 0l7 7m-7-7v18" /></svg>
+                            )}
+                            {diff < 0 ? `${diff.toFixed(1)}%` : `+${diff.toFixed(1)}%`}
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0 pt-0.5" onClick={e => e.stopPropagation()}>
+                {/* Hover actions (top-right) */}
+                <div
+                  className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={e => e.stopPropagation()}
+                >
                   {!isRead && (
                     <button
                       onClick={() => markRead(alert.id)}
-                      className="text-xs text-blue-500 hover:text-blue-700 font-medium whitespace-nowrap"
+                      className="p-1.5 rounded-md bg-white border border-gray-200 text-gray-500 hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50 transition-all shadow-sm"
+                      title="Marcar como leída"
                     >
-                      Marcar leída
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
                     </button>
                   )}
                   <button
                     onClick={() => deleteAlert(alert.id)}
-                    className="text-gray-300 hover:text-red-400 transition-colors text-xl leading-none"
+                    className="p-1.5 rounded-md bg-white border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-300 hover:bg-red-50 transition-all shadow-sm"
                     title="Eliminar"
-                  >×</button>
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
                 </div>
               </div>
             )
@@ -390,7 +441,7 @@ export default function HistorySection({
 
       {/* Product panel — slides in from the right */}
       {panelSku && (
-        <div className="fixed inset-0 z-40" onClick={() => setPanelSku(null)}>
+        <div className="fixed inset-0 z-40 bg-black/20 backdrop-blur-[1px]" onClick={() => setPanelSku(null)}>
           <div
             className="absolute top-0 right-0 h-full w-full md:w-130 bg-white shadow-2xl flex flex-col"
             onClick={e => e.stopPropagation()}
@@ -449,12 +500,23 @@ export default function HistorySection({
                             <span className="text-xs text-gray-400">Precio cat.</span>
                             <span className="text-lg font-bold text-blue-700">{formatPrice(panelData.product.catalog_price, panelData.product.currency_id)}</span>
                           </div>
+                        ) : panelData.product.sale_price != null ? (
+                          <div className="flex items-baseline justify-between">
+                            <span className="text-xs text-emerald-600 font-medium">Oferta</span>
+                            <span className="text-lg font-bold text-emerald-600">{formatPrice(panelData.product.sale_price, panelData.product.currency_id)}</span>
+                          </div>
                         ) : panelData.product.price != null ? (
                           <div className="flex items-baseline justify-between">
-                            <span className="text-xs text-gray-400">Precio cat.</span>
+                            <span className="text-xs text-gray-400">Precio</span>
                             <span className="text-lg font-bold text-gray-900">{formatPrice(panelData.product.price, panelData.product.currency_id)}</span>
                           </div>
                         ) : null}
+                        {panelData.product.sale_price != null && panelData.product.price != null && panelData.product.sale_price !== panelData.product.price && (
+                          <div className="flex items-baseline justify-between">
+                            <span className="text-xs text-gray-300">Lista</span>
+                            <span className="text-xs text-gray-400 line-through">{formatPrice(panelData.product.price, panelData.product.currency_id)}</span>
+                          </div>
+                        )}
                         {panelData.product.price != null && panelData.product.catalog_price != null && panelData.product.price !== panelData.product.catalog_price && (
                           <div className="flex items-baseline justify-between">
                             <span className="text-xs text-gray-300">Pub.</span>
@@ -493,13 +555,13 @@ export default function HistorySection({
                         const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : null
                         const isCheaper = entry.diff != null && entry.diff < 0
                         return (
-                          <div key={entry.key} className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${entry.isOurs ? (entry.oursType === 'cat' ? 'bg-blue-50 border-blue-300 shadow-sm' : 'bg-gray-50 border-gray-300 shadow-sm') : 'bg-white border-gray-100'}`}>
+                          <div key={entry.key} className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${entry.isOurs ? (entry.oursType === 'cat' ? 'bg-blue-50 border-blue-300 shadow-sm' : entry.oursType === 'sale' ? 'bg-emerald-50 border-emerald-300 shadow-sm' : 'bg-gray-50 border-gray-300 shadow-sm') : 'bg-white border-gray-100'}`}>
                             <div className="w-7 text-center shrink-0">
                               {medal ? <span className="text-xl">{medal}</span> : <span className="text-sm font-bold text-gray-400">{idx + 1}</span>}
                             </div>
                             {entry.isOurs ? (
-                              <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${entry.oursType === 'cat' ? 'bg-blue-200' : 'bg-gray-200'}`}>
-                                <svg className={`w-4 h-4 ${entry.oursType === 'cat' ? 'text-blue-600' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                              <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${entry.oursType === 'cat' ? 'bg-blue-200' : entry.oursType === 'sale' ? 'bg-emerald-200' : 'bg-gray-200'}`}>
+                                <svg className={`w-4 h-4 ${entry.oursType === 'cat' ? 'text-blue-600' : entry.oursType === 'sale' ? 'text-emerald-700' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
                               </div>
                             ) : entry.thumbnail ? (
                               <Image src={imgUrl(entry.thumbnail)!} alt="" width={36} height={36} className="w-9 h-9 rounded-lg object-contain bg-gray-50 shrink-0" unoptimized />
@@ -507,8 +569,8 @@ export default function HistorySection({
                               <div className="w-9 h-9 rounded-lg bg-gray-100 shrink-0" />
                             )}
                             <div className="flex-1 min-w-0">
-                              <p className={`text-sm font-medium line-clamp-1 ${entry.isOurs ? (entry.oursType === 'cat' ? 'text-blue-700' : 'text-gray-600') : 'text-gray-900'}`}>{entry.label}</p>
-                              <p className="text-xs text-gray-400">{entry.isOurs ? (entry.oursType === 'cat' ? 'Nuestro — catálogo' : 'Nuestro') : entry.seller ?? 'Competidor'}</p>
+                              <p className={`text-sm font-medium line-clamp-1 ${entry.isOurs ? (entry.oursType === 'cat' ? 'text-blue-700' : entry.oursType === 'sale' ? 'text-emerald-700' : 'text-gray-600') : 'text-gray-900'}`}>{entry.label}</p>
+                              <p className="text-xs text-gray-400">{entry.isOurs ? (entry.oursType === 'cat' ? 'Nuestro — catálogo' : entry.oursType === 'sale' ? 'Nuestro — oferta' : 'Nuestro') : entry.seller ?? 'Competidor'}</p>
                             </div>
                             <div className="text-right shrink-0">
                               <p className="text-base font-bold text-gray-900">{formatPrice(entry.price, entry.currency)}</p>

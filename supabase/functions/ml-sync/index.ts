@@ -174,6 +174,7 @@ interface MLItem {
   price?: number;
   base_price?: number;
   original_price?: number;
+  sale_price?: { amount?: number | null; price_id?: string | null } | null;
   currency_id?: string;
   initial_quantity?: number;
   available_quantity?: number;
@@ -247,6 +248,7 @@ function mapItemToRow(item: MLItem) {
     price: item.price ?? null,
     base_price: item.base_price ?? null,
     original_price: item.original_price ?? null,
+    sale_price: item.sale_price?.amount ?? null,
     currency_id: item.currency_id ?? null,
     initial_quantity: item.initial_quantity ?? null,
     available_quantity: item.available_quantity ?? null,
@@ -296,22 +298,107 @@ function mapItemToRow(item: MLItem) {
   };
 }
 
+async function fetchItem(id: string, token: string): Promise<MLItem | null> {
+  try {
+    const res = await fetch(`${ML_API}/items/${id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      console.warn(`[items/${id}] ${res.status}`);
+      return null;
+    }
+    return await res.json() as MLItem;
+  } catch (err) {
+    console.warn(`[items/${id}] fetch error:`, err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+// /items/{id}/prices exposes promotional / deal pricing that the items endpoint
+// omits for the seller's own items. We pick the lowest amount among entries
+// flagged as promotional (type contains "promotion" or regular_amount present).
+interface MLPriceEntry {
+  id?: string;
+  type?: string;
+  amount?: number | null;
+  regular_amount?: number | null;
+  currency_id?: string;
+  conditions?: unknown;
+  metadata?: unknown;
+}
+interface MLPricesResponse {
+  id?: string;
+  prices?: MLPriceEntry[];
+}
+
+let debugPricesCallCount = 0;
+let debugPromosFoundCount = 0;
+
+async function fetchItemPrices(id: string, token: string): Promise<MLPricesResponse | null> {
+  try {
+    const res = await fetch(`${ML_API}/items/${id}/prices`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      if (res.status !== 404) console.warn(`[items/${id}/prices] ${res.status}`);
+      return null;
+    }
+    return await res.json() as MLPricesResponse;
+  } catch (err) {
+    console.warn(`[items/${id}/prices] fetch error:`, err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+function extractPromoAmount(prices: MLPricesResponse | null): number | null {
+  const list = Array.isArray(prices?.prices) ? prices!.prices! : [];
+  if (list.length === 0) return null;
+
+  const promos = list.filter((p) => {
+    if (typeof p.amount !== "number") return false;
+    const isPromoType = typeof p.type === "string" && /promo|deal|campaign/i.test(p.type);
+    const isDiscounted =
+      typeof p.regular_amount === "number" && p.regular_amount > p.amount;
+    return isPromoType || isDiscounted;
+  });
+
+  if (promos.length === 0) return null;
+  return promos.reduce((min, p) => {
+    const v = p.amount as number;
+    return min === null || v < min ? v : min;
+  }, null as number | null);
+}
+
 async function fetchAndUpsertItems(
   ids: string[],
   token: string
 ): Promise<number> {
   let upserted = 0;
+  const CONCURRENCY = 20;
 
-  // ML permite hasta 20 items por request multiget
-  for (const batch of chunk(ids, 20)) {
-    const idsParam = batch.join(",");
-    const response = await mlFetch<
-      { code: number; body: MLItem; id: string }[]
-    >(`/items?ids=${idsParam}`, token);
+  // For each item we fetch /items/{id} and /items/{id}/prices in parallel.
+  // The prices endpoint surfaces real promotional prices that don't appear in
+  // the items payload for the seller's own listings.
+  for (const batch of chunk(ids, CONCURRENCY)) {
+    const results = await Promise.all(
+      batch.map(async (id) => {
+        const [item, pricesResp] = await Promise.all([
+          fetchItem(id, token),
+          fetchItemPrices(id, token),
+        ]);
+        debugPricesCallCount++;
+        if (!item) return null;
+        const row = mapItemToRow(item);
+        const promoPrice = extractPromoAmount(pricesResp);
+        if (promoPrice !== null) {
+          row.sale_price = promoPrice;
+          debugPromosFoundCount++;
+        }
 
-    const rows = response
-      .filter((r) => r.code === 200 && r.body)
-      .map((r) => mapItemToRow(r.body));
+        return row;
+      })
+    );
+    const rows = results.filter((r): r is ReturnType<typeof mapItemToRow> => r !== null);
 
     if (rows.length === 0) continue;
 
@@ -344,12 +431,20 @@ Deno.serve(async (req) => {
     const ids = await fetchAllItemIds(tokenRow.access_token, tokenRow.user_id);
     console.log(`Total productos: ${ids.length} (user_id: ${tokenRow.user_id})`);
 
+    debugPricesCallCount = 0;
+    debugPromosFoundCount = 0;
     const upserted = await fetchAndUpsertItems(ids, tokenRow.access_token);
+
+    console.log(
+      `[ml-sync diag] /prices calls=${debugPricesCallCount} promos_found=${debugPromosFoundCount}`
+    );
 
     const result = {
       success: true,
       total_ids: ids.length,
       upserted,
+      prices_calls: debugPricesCallCount,
+      promos_found: debugPromosFoundCount,
       synced_at: new Date().toISOString(),
     };
 
