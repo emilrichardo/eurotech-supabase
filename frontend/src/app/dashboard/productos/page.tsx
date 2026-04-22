@@ -8,6 +8,9 @@ export default async function ProductosPage() {
   const supabase = createAdminClient()
 
   const [productsResult, competitorsResult, categoriesResult, lastProductSyncResult, lastCompetitorSyncResult] = await Promise.all([
+    // List query: exclude heavy JSONB fields (pictures, shipping, tags, attributes).
+    // Those are only needed in the detail panel and are fetched on-demand via
+    // /api/product-panel/[sku] when a row is clicked.
     supabase
       .from('ml_products')
       .select(
@@ -17,8 +20,7 @@ export default async function ProductosPage() {
          thumbnail, permalink, category_id, domain_id,
          catalog_product_id, seller_custom_field,
          warranty, health, automatic_relist, catalog_listing,
-         date_created, last_updated, synced_at, start_time, stop_time,
-         shipping, tags, attributes, pictures`,
+         date_created, last_updated, synced_at, start_time, stop_time`,
         { count: 'exact' }
       )
       .neq('status', 'closed')

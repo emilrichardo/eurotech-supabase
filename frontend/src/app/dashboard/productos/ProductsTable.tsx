@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Image from 'next/image'
 
 function Accordion({ title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
@@ -322,6 +322,26 @@ export default function ProductsTable({
   const PAGE_SIZE = 50
 
   const [selected, setSelected] = useState<Product | null>(null)
+  // Heavy JSONB fields fetched on-demand when the panel opens (kept out of the
+  // list query for perf). Keyed by product id so we don't refetch on re-select.
+  const [mediaById, setMediaById] = useState<Record<string, { pictures: Product['pictures']; shipping: Product['shipping'] }>>({})
+
+  useEffect(() => {
+    if (!selected || mediaById[selected.id]) return
+    let cancelled = false
+    fetch(`/api/product-media/${selected.id}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => {
+        if (cancelled || !data) return
+        setMediaById(prev => ({ ...prev, [selected.id]: { pictures: data.pictures ?? null, shipping: data.shipping ?? null } }))
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [selected, mediaById])
+
+  const selectedMedia = selected ? mediaById[selected.id] : undefined
+  const selectedPictures = selectedMedia?.pictures ?? selected?.pictures ?? null
+  const selectedShipping = selectedMedia?.shipping ?? selected?.shipping ?? null
   const [view, setView] = useState<ViewMode>('grid')
   const [localCompetitors, setLocalCompetitors] = useState<Record<string, Competitor[]>>(competitorsBySku)
   const [showAddModal, setShowAddModal] = useState(false)
@@ -826,9 +846,9 @@ export default function ProductsTable({
               {/* Top 2-col: image + key info */}
               <div className="flex border-b border-gray-100 shrink-0">
                 <div className="w-40 shrink-0 bg-gray-50 flex items-center justify-center p-2 border-r border-gray-100">
-                  {(selected.pictures?.[0]?.secure_url || selected.thumbnail) ? (
+                  {(selectedPictures?.[0]?.secure_url || selected.thumbnail) ? (
                     <Image
-                      src={selected.pictures?.[0]?.secure_url ?? imgUrl(selected.thumbnail, 'full')!}
+                      src={selectedPictures?.[0]?.secure_url ?? imgUrl(selected.thumbnail, 'full')!}
                       alt={selected.title}
                       width={144}
                       height={144}
@@ -1215,9 +1235,9 @@ export default function ProductsTable({
                       <InfoRow label="Relisting automático" value={selected.automatic_relist != null ? (selected.automatic_relist ? 'Sí' : 'No') : null} />
                       <InfoRow label="En catálogo" value={selected.catalog_listing != null ? (selected.catalog_listing ? 'Sí' : 'No') : null} />
                     </Accordion>
-                    {selected.shipping && (
+                    {selectedShipping && (
                       <Accordion title="Envío">
-                        {Object.entries(selected.shipping).map(([key, val]) => (
+                        {Object.entries(selectedShipping).map(([key, val]) => (
                           <InfoRow key={key} label={key} value={typeof val === 'object' ? JSON.stringify(val) : String(val)} />
                         ))}
                       </Accordion>
