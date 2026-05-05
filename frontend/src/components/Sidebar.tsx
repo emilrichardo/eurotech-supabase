@@ -1,9 +1,9 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
-import type { User } from '@supabase/supabase-js'
+import { usePathname } from 'next/navigation'
+import { getProjectByPath, type ProjectView } from '@/lib/projects'
+import type React from 'react'
 
 type IconProps = { className?: string }
 
@@ -32,47 +32,28 @@ const UsersIcon = ({ className }: IconProps) => (
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6 5.87a4 4 0 10-6 0M16 3.13a4 4 0 010 7.75M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
   </svg>
 )
-const LogoutIcon = ({ className }: IconProps) => (
-  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M17 16l4-4m0 0l-4-4m4 4H9m0-8H5a2 2 0 00-2 2v12a2 2 0 002 2h4" />
-  </svg>
-)
+const iconMap: Record<ProjectView['icon'], (props: IconProps) => React.ReactNode> = {
+  home: HomeIcon,
+  box: BoxIcon,
+  bell: BellIcon,
+  trend: TrendIcon,
+  users: UsersIcon,
+}
 
-const navItems = [
-  { href: '/dashboard', label: 'Inicio', Icon: HomeIcon },
-  { href: '/dashboard/productos', label: 'Productos', Icon: BoxIcon },
-  { href: '/dashboard/alertas', label: 'Alertas de precio', Icon: BellIcon },
-  { href: '/dashboard/seguimiento', label: 'Seguimiento', Icon: TrendIcon },
-  { href: '/dashboard/usuarios', label: 'Usuarios', Icon: UsersIcon },
-]
-
-export default function Sidebar({ user }: { user: User }) {
+export default function Sidebar() {
   const pathname = usePathname()
-  const router = useRouter()
-
-  async function handleLogout() {
-    const supabase = createClient()
-    await supabase.auth.signOut()
-    router.push('/login')
-    router.refresh()
-  }
-
-  const initial = (user.email ?? '?').charAt(0).toUpperCase()
+  const project = getProjectByPath(pathname)
 
   return (
     <aside className="w-60 bg-white border-r border-gray-200 flex flex-col shrink-0">
-      <div className="px-5 py-5 border-b border-gray-100 flex items-center gap-2.5">
-        <div className="w-8 h-8 rounded-lg bg-linear-to-br from-blue-500 to-indigo-600 text-white font-bold text-sm flex items-center justify-center shadow-sm">
-          E
-        </div>
-        <div className="leading-tight">
-          <p className="text-sm font-bold text-gray-900">Eurotech</p>
-          <p className="text-[10px] text-gray-400 uppercase tracking-wider">ML Tracking</p>
-        </div>
+      <div className="px-5 py-4 border-b border-gray-100">
+        <p className="text-[10px] text-gray-400 uppercase tracking-wider">{project.eyebrow}</p>
+        <p className="mt-1 text-sm font-bold text-gray-900">{project.name}</p>
       </div>
 
       <nav className="flex-1 px-3 py-4 space-y-0.5">
-        {navItems.map(({ href, label, Icon }) => {
+        {project.views.map(({ href, label, icon }) => {
+          const Icon = iconMap[icon]
           const isActive = href === '/dashboard' ? pathname === href : pathname.startsWith(href)
           return (
             <Link
@@ -93,22 +74,6 @@ export default function Sidebar({ user }: { user: User }) {
           )
         })}
       </nav>
-
-      <div className="px-3 py-3 border-t border-gray-100">
-        <div className="flex items-center gap-2.5 px-2 py-1.5">
-          <div className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 font-semibold text-sm flex items-center justify-center shrink-0">
-            {initial}
-          </div>
-          <p className="text-xs text-gray-500 truncate flex-1">{user.email}</p>
-        </div>
-        <button
-          onClick={handleLogout}
-          className="mt-1 w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-xs text-gray-500 hover:text-red-600 hover:bg-red-50/50 transition-colors"
-        >
-          <LogoutIcon className="w-4 h-4" />
-          Cerrar sesión
-        </button>
-      </div>
     </aside>
   )
 }
