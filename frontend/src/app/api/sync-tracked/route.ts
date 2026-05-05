@@ -28,7 +28,7 @@ async function tryRefreshToken(admin: ReturnType<typeof createAdminClient>): Pro
     console.warn('[sync-tracked] ml-sync invoke exception:', e)
   }
   const { data } = await admin
-    .from('ml_tokens')
+    .schema('ml').from('ml_tokens')
     .select('access_token')
     .order('expires_at', { ascending: false })
     .limit(1)
@@ -40,7 +40,7 @@ export async function POST() {
   const admin = createAdminClient()
 
   const { data: tokenRow } = await admin
-    .from('ml_tokens')
+    .schema('ml').from('ml_tokens')
     .select('access_token')
     .order('expires_at', { ascending: false })
     .limit(1)
@@ -55,7 +55,7 @@ export async function POST() {
 
   // Load active tracked items
   const { data: items, error: itemsError } = await admin
-    .from('ml_tracked_items')
+    .schema('ml').from('ml_tracked_items')
     .select('id, ml_item_id')
     .eq('active', true)
 
@@ -69,7 +69,7 @@ export async function POST() {
   // Load latest snapshot per item (for change detection)
   const trackedIds = items.map(i => i.id)
   const { data: allSnapshots, error: snapLoadError } = await admin
-    .from('ml_tracked_snapshots')
+    .schema('ml').from('ml_tracked_snapshots')
     .select('tracked_item_id, price, sale_price, original_price, available_quantity, sold_quantity, status')
     .in('tracked_item_id', trackedIds)
     .order('scraped_at', { ascending: false })
@@ -153,7 +153,7 @@ export async function POST() {
           latest.status !== body.status
 
         if (changed) {
-          const { error: snapError } = await admin.from('ml_tracked_snapshots').insert({
+          const { error: snapError } = await admin.schema('ml').from('ml_tracked_snapshots').insert({
             tracked_item_id: item.id,
             price: body.price ?? null,
             original_price: body.original_price ?? null,
@@ -169,7 +169,7 @@ export async function POST() {
 
         if (body.title) {
           await admin
-            .from('ml_tracked_items')
+            .schema('ml').from('ml_tracked_items')
             .update({ title: body.title, thumbnail: body.thumbnail ?? null, last_scraped_at: now })
             .eq('id', item.id)
         }

@@ -8,13 +8,13 @@ export default async function SeguimientoPage() {
 
   const [itemsRes, skusRes] = await Promise.all([
     admin
-      .from('ml_tracked_items')
+      .schema('ml').from('ml_tracked_items')
       .select('*')
       .eq('active', true)
       .order('created_at', { ascending: false }),
 
     admin
-      .from('ml_products')
+      .schema('ml').from('ml_products')
       .select('sku, title, thumbnail, price, catalog_price, currency_id')
       .not('sku', 'is', null)
       .not('status', 'in', '("paused","closed")')
@@ -38,7 +38,7 @@ export default async function SeguimientoPage() {
   let snapshotRows: Record<string, unknown>[] = []
   if (ids.length > 0) {
     const { data } = await admin
-      .from('ml_tracked_snapshots')
+      .schema('ml').from('ml_tracked_snapshots')
       .select('*')
       .in('tracked_item_id', ids)
       .order('scraped_at', { ascending: false })

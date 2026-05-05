@@ -11,7 +11,7 @@ export async function GET(
   const { id } = await params
   const admin = createAdminClient()
   const { data, error } = await admin
-    .from('ml_products')
+    .schema('ml').from('ml_products')
     .select('pictures, shipping')
     .eq('id', id)
     .maybeSingle()

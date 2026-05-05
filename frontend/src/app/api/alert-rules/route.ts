@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 export async function GET() {
   const admin = createAdminClient()
   const { data, error } = await admin
-    .from('ml_price_alert_rules')
+    .schema('ml').from('ml_price_alert_rules')
     .select('*, ml_price_alerts(count)')
     .order('created_at', { ascending: false })
 
@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
 
   const admin = createAdminClient()
   const { data, error } = await admin
-    .from('ml_price_alert_rules')
+    .schema('ml').from('ml_price_alert_rules')
     .insert({
       name,
       rule_type,

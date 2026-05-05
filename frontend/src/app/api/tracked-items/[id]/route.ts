@@ -6,7 +6,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const body = await req.json()
   const admin = createAdminClient()
   const { error } = await admin
-    .from('ml_tracked_items')
+    .schema('ml').from('ml_tracked_items')
     .update({ ...body })
     .eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -17,7 +17,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const { id } = await params
   const admin = createAdminClient()
   const { error } = await admin
-    .from('ml_tracked_items')
+    .schema('ml').from('ml_tracked_items')
     .update({ active: false })
     .eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

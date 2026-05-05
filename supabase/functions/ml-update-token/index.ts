@@ -40,7 +40,7 @@ Deno.serve(async (req) => {
 
   // Buscar fila existente
   const { data: existing } = await supabase
-    .from("ml_tokens")
+    .schema("ml").from("ml_tokens")
     .select("id")
     .order("id", { ascending: false })
     .limit(1)
@@ -50,7 +50,7 @@ Deno.serve(async (req) => {
 
   if (existing) {
     ({ error } = await supabase
-      .from("ml_tokens")
+      .schema("ml").from("ml_tokens")
       .update({
         access_token,
         ...(refresh_token ? { refresh_token } : {}),
@@ -60,7 +60,7 @@ Deno.serve(async (req) => {
       .eq("id", existing.id));
   } else {
     ({ error } = await supabase
-      .from("ml_tokens")
+      .schema("ml").from("ml_tokens")
       .insert({
         access_token,
         refresh_token: refresh_token ?? null,

@@ -8,12 +8,12 @@ export default async function AlertasPage() {
 
   const [rulesRes, alertsRes, skusRes] = await Promise.all([
     admin
-      .from('ml_price_alert_rules')
+      .schema('ml').from('ml_price_alert_rules')
       .select('*, ml_price_alerts(count)')
       .order('created_at', { ascending: false }),
 
     admin
-      .from('ml_price_alerts')
+      .schema('ml').from('ml_price_alerts')
       .select(`
         id, our_sku, competitor_item_id,
         our_price, catalog_price, competitor_price_before, competitor_price_after,
@@ -25,7 +25,7 @@ export default async function AlertasPage() {
       .limit(200),
 
     admin
-      .from('ml_products')
+      .schema('ml').from('ml_products')
       .select('sku, title, synced_at')
       .not('sku', 'is', null)
       .eq('status', 'active')

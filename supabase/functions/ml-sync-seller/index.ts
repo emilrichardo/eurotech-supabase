@@ -8,7 +8,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 async function getToken(): Promise<{ token: string; userId: number }> {
   const { data, error } = await supabase
-    .from("ml_tokens")
+    .schema("ml").from("ml_tokens")
     .select("access_token, user_id")
     .order("id", { ascending: false })
     .limit(1)
@@ -109,7 +109,7 @@ async function syncSeller(token: string, userId: number) {
     synced_at: new Date().toISOString(),
   };
 
-  const { error } = await supabase.from("ml_seller").upsert(row, { onConflict: "id" });
+  const { error } = await supabase.schema("ml").from("ml_seller").upsert(row, { onConflict: "id" });
   if (error) throw new Error(`Error upserting seller: ${error.message}`);
   return row;
 }
@@ -142,7 +142,7 @@ async function syncSellerVisits(token: string, userId: number) {
   if (rows.length === 0) return { days: 0, total_visits: 0 };
 
   const { error } = await supabase
-    .from("ml_seller_visits")
+    .schema("ml").from("ml_seller_visits")
     .upsert(rows, { onConflict: "date" });
 
   if (error) throw new Error(`Error upserting seller visits: ${error.message}`);

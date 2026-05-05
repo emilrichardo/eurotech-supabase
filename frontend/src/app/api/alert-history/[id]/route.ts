@@ -6,7 +6,7 @@ export async function PATCH(_req: NextRequest, { params }: { params: Promise<{ i
   const admin = createAdminClient()
 
   const { error } = await admin
-    .from('ml_price_alerts')
+    .schema('ml').from('ml_price_alerts')
     .update({ read_at: new Date().toISOString() })
     .eq('id', id)
 
@@ -19,7 +19,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const admin = createAdminClient()
 
   const { error } = await admin
-    .from('ml_price_alerts')
+    .schema('ml').from('ml_price_alerts')
     .delete()
     .eq('id', id)
 

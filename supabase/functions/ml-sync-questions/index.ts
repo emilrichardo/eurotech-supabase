@@ -8,7 +8,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 async function getToken(): Promise<{ token: string; userId: number }> {
   const { data, error } = await supabase
-    .from("ml_tokens")
+    .schema("ml").from("ml_tokens")
     .select("access_token, user_id")
     .order("id", { ascending: false })
     .limit(1)
@@ -104,7 +104,7 @@ Deno.serve(async (req) => {
     const PAGE = 1000;
     while (true) {
       const { data, error: prodError } = await supabase
-        .from("ml_products")
+        .schema("ml").from("ml_products")
         .select("id")
         .range(from, from + PAGE - 1);
       if (prodError) throw new Error(`Error fetching products: ${prodError.message}`);
@@ -140,7 +140,7 @@ Deno.serve(async (req) => {
 
       if (allRows.length > 0) {
         const { error } = await supabase
-          .from("ml_questions")
+          .schema("ml").from("ml_questions")
           .upsert(allRows, { onConflict: "id" });
 
         if (error) {

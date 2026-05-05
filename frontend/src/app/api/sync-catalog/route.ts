@@ -5,7 +5,7 @@ const ML_API = 'https://api.mercadolibre.com'
 
 async function getMlToken(admin: ReturnType<typeof createAdminClient>) {
   const { data } = await admin
-    .from('ml_tokens')
+    .schema('ml').from('ml_tokens')
     .select('access_token, user_id')
     .order('expires_at', { ascending: false })
     .limit(1)
@@ -24,7 +24,7 @@ export async function POST() {
   // ── 1. Catalog prices ─────────────────────────────────────────────────────
   // Fetch products that have either catalog_product_id or user_product_id (MLUU universal catalogs)
   const { data: products } = await admin
-    .from('ml_products')
+    .schema('ml').from('ml_products')
     .select('id, catalog_product_id, user_product_id, seller_id')
     .or('catalog_product_id.not.is.null,user_product_id.not.is.null')
 
@@ -72,7 +72,7 @@ export async function POST() {
   // Upsert catalog prices
   for (const upd of catalogUpdates) {
     await admin
-      .from('ml_products')
+      .schema('ml').from('ml_products')
       .update({
         catalog_price: upd.catalog_price,
         buybox_price: upd.buybox_price,
@@ -83,7 +83,7 @@ export async function POST() {
 
   // ── 2. Category names ─────────────────────────────────────────────────────
   const { data: allProducts } = await admin
-    .from('ml_products')
+    .schema('ml').from('ml_products')
     .select('category_id')
 
   const categoryIds = [
@@ -109,7 +109,7 @@ export async function POST() {
   }))
 
   if (categoryRows.length > 0) {
-    await admin.from('ml_categories').upsert(categoryRows)
+    await admin.schema('ml').from('ml_categories').upsert(categoryRows)
   }
 
   return NextResponse.json({

@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   const admin = createAdminClient()
 
   let query = admin
-    .from('ml_price_alerts')
+    .schema('ml').from('ml_price_alerts')
     .select(`
       id, our_sku, competitor_item_id,
       our_price, catalog_price, competitor_price_before, competitor_price_after,
@@ -33,7 +33,7 @@ export async function DELETE(req: NextRequest) {
   // Delete all read alerts
   const admin = createAdminClient()
   const { error } = await admin
-    .from('ml_price_alerts')
+    .schema('ml').from('ml_price_alerts')
     .delete()
     .not('read_at', 'is', null)
 

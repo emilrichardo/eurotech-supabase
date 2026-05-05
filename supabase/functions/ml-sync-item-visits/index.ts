@@ -10,7 +10,7 @@ const PAGE_SIZE = 150; // items por invocación (safe dentro del timeout de 150s
 
 async function getToken(): Promise<string> {
   const { data, error } = await supabase
-    .from("ml_tokens")
+    .schema("ml").from("ml_tokens")
     .select("access_token")
     .order("id", { ascending: false })
     .limit(1)
@@ -39,7 +39,7 @@ Deno.serve(async (req) => {
     // Traer los items de esta página ordenados por last_updated
     const from = page * PAGE_SIZE;
     const { data: products, error: prodError } = await supabase
-      .from("ml_products")
+      .schema("ml").from("ml_products")
       .select("id")
       .order("last_updated", { ascending: false })
       .range(from, from + PAGE_SIZE - 1);
@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
           const visits = data[product.id] ?? 0;
 
           await supabase
-            .from("ml_item_visits")
+            .schema("ml").from("ml_item_visits")
             .upsert(
               { item_id: product.id, date: today, visits, synced_at: new Date().toISOString() },
               { onConflict: "item_id,date" }
@@ -82,7 +82,7 @@ Deno.serve(async (req) => {
 
     // Calcular si hay más páginas
     const { count } = await supabase
-      .from("ml_products")
+      .schema("ml").from("ml_products")
       .select("id", { count: "exact", head: true });
 
     const totalPages = Math.ceil((count ?? 0) / PAGE_SIZE);

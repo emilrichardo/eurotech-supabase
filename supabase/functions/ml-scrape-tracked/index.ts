@@ -13,7 +13,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 async function getToken(): Promise<string> {
   const { data, error } = await supabase
-    .from("ml_tokens")
+    .schema("ml").from("ml_tokens")
     .select("access_token")
     .order("id", { ascending: false })
     .limit(1)
@@ -64,7 +64,7 @@ Deno.serve(async (req) => {
 
     // Load all active tracked items
     const { data: items, error: itemsError } = await supabase
-      .from("ml_tracked_items")
+      .schema("ml").from("ml_tracked_items")
       .select("id, ml_item_id")
       .eq("active", true);
 
@@ -78,7 +78,7 @@ Deno.serve(async (req) => {
     // Load latest snapshot for each item (for change detection)
     const trackedIds = items.map((i) => i.id);
     const { data: allSnapshots } = await supabase
-      .from("ml_tracked_snapshots")
+      .schema("ml").from("ml_tracked_snapshots")
       .select("tracked_item_id, price, available_quantity, sold_quantity, status")
       .in("tracked_item_id", trackedIds)
       .order("scraped_at", { ascending: false });
@@ -159,7 +159,7 @@ Deno.serve(async (req) => {
 
       if (newSnapshots.length > 0) {
         const { error: snapError } = await supabase
-          .from("ml_tracked_snapshots")
+          .schema("ml").from("ml_tracked_snapshots")
           .insert(newSnapshots);
         if (snapError) console.error(`Error insertando snapshots: ${snapError.message}`);
         else snapshotsStored += newSnapshots.length;
@@ -168,7 +168,7 @@ Deno.serve(async (req) => {
       // Update metadata on tracked items
       for (const upd of titleUpdates) {
         await supabase
-          .from("ml_tracked_items")
+          .schema("ml").from("ml_tracked_items")
           .update({ title: upd.title, thumbnail: upd.thumbnail, last_scraped_at: upd.last_scraped_at })
           .eq("id", upd.id);
       }

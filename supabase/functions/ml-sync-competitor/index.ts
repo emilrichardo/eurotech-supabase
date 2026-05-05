@@ -22,7 +22,7 @@ interface TokenRow {
 
 async function getValidToken(): Promise<TokenRow> {
   const { data, error } = await supabase
-    .from("ml_tokens")
+    .schema("ml").from("ml_tokens")
     .select("*")
     .order("id", { ascending: false })
     .limit(1)
@@ -77,7 +77,7 @@ async function refreshToken(tokenRow: TokenRow): Promise<string> {
   const expiresAt = new Date(Date.now() + (newToken.expires_in ?? 21600) * 1000);
 
   await supabase
-    .from("ml_tokens")
+    .schema("ml").from("ml_tokens")
     .update({
       access_token: newToken.access_token,
       refresh_token: newToken.refresh_token ?? tokenRow.refresh_token,
@@ -271,7 +271,7 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
 }> {
   // 1. Cargar todos los competitor items
   const { data: competitorItems, error: ciError } = await supabase
-    .from("ml_competitor_items")
+    .schema("ml").from("ml_competitor_items")
     .select("id, our_sku, price, previous_price, permalink");
 
   if (ciError) throw new Error(`Error cargando competitor items: ${ciError.message}`);
@@ -282,7 +282,7 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
 
   // 2. Cargar todas las reglas habilitadas
   const { data: rules, error: rulesError } = await supabase
-    .from("ml_price_alert_rules")
+    .schema("ml").from("ml_price_alert_rules")
     .select("*")
     .eq("enabled", true);
 
@@ -292,7 +292,7 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
   // 3. Cargar precios propios agrupados por SKU
   const skus = [...new Set((competitorItems as CompetitorItem[]).map((c) => c.our_sku))];
   const { data: ownProducts, error: prodError } = await supabase
-    .from("ml_products")
+    .schema("ml").from("ml_products")
     .select("sku, price, catalog_price")
     .in("sku", skus);
 
@@ -405,14 +405,14 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
 
     if (allUpdates.length > 0) {
       const { error: upsertError } = await supabase
-        .from("ml_competitor_items")
+        .schema("ml").from("ml_competitor_items")
         .upsert(allUpdates, { onConflict: "id" });
       if (upsertError) console.error(`Error actualizando catalog items: ${upsertError.message}`);
       else itemsUpdated += allUpdates.length;
     }
 
     if (allAlerts.length > 0) {
-      const { error: alertError } = await supabase.from("ml_price_alerts").insert(allAlerts);
+      const { error: alertError } = await supabase.schema("ml").from("ml_price_alerts").insert(allAlerts);
       if (alertError) console.error(`Error insertando alertas: ${alertError.message}`);
       else alertsFired += allAlerts.length;
     }
@@ -510,7 +510,7 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
     // 6. Upsert precios actualizados
     if (updateRows.length > 0) {
       const { error: upsertError } = await supabase
-        .from("ml_competitor_items")
+        .schema("ml").from("ml_competitor_items")
         .upsert(updateRows, { onConflict: "id" });
 
       if (upsertError) {
@@ -523,7 +523,7 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
     // 7. Insertar alertas
     if (alertRows.length > 0) {
       const { error: alertError } = await supabase
-        .from("ml_price_alerts")
+        .schema("ml").from("ml_price_alerts")
         .insert(alertRows);
 
       if (alertError) {

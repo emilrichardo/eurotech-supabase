@@ -34,11 +34,11 @@ export default async function DashboardPage() {
     lastProductSyncResult,
     lastCompetitorSyncResult,
   ] = await Promise.all([
-    admin.from('ml_products').select('*', { count: 'exact', head: true }),
-    admin.from('ml_products').select('*', { count: 'exact', head: true }).eq('status', 'active'),
-    admin.from('price_alerts').select('*', { count: 'exact', head: true }),
-    admin.from('ml_products').select('synced_at').order('synced_at', { ascending: false }).limit(1).single(),
-    admin.from('ml_competitor_items').select('synced_at').order('synced_at', { ascending: false }).limit(1).single(),
+    admin.schema('ml').from('ml_products').select('*', { count: 'exact', head: true }),
+    admin.schema('ml').from('ml_products').select('*', { count: 'exact', head: true }).eq('status', 'active'),
+    admin.schema('ml').from('ml_price_alerts').select('*', { count: 'exact', head: true }),
+    admin.schema('ml').from('ml_products').select('synced_at').order('synced_at', { ascending: false }).limit(1).single(),
+    admin.schema('ml').from('ml_competitor_items').select('synced_at').order('synced_at', { ascending: false }).limit(1).single(),
   ])
   const totalAlertas = alertasResult.error ? null : alertasResult.count
   const lastProductSync = lastProductSyncResult.data?.synced_at ?? null

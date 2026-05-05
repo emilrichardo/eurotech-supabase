@@ -103,7 +103,7 @@ export async function POST() {
   const usdRate = await fetchUsdToUyu()
 
   const { data: tokenRow } = await admin
-    .from('ml_tokens')
+    .schema('ml').from('ml_tokens')
     .select('access_token, user_id')
     .order('expires_at', { ascending: false })
     .limit(1)
@@ -118,7 +118,7 @@ export async function POST() {
 
   // Load competitor items (including current price as "before")
   const { data: items, error } = await admin
-    .from('ml_competitor_items')
+    .schema('ml').from('ml_competitor_items')
     .select('id, our_sku, permalink, seller_id, seller_name, price')
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -128,8 +128,8 @@ export async function POST() {
 
   // Load enabled alert rules and our product prices (for diff calculation)
   const [rulesRes, productsRes] = await Promise.all([
-    admin.from('ml_price_alert_rules').select('id, rule_type, sku, threshold_pct').eq('enabled', true),
-    admin.from('ml_products').select('sku, price').not('sku', 'is', null),
+    admin.schema('ml').from('ml_price_alert_rules').select('id, rule_type, sku, threshold_pct').eq('enabled', true),
+    admin.schema('ml').from('ml_products').select('sku, price').not('sku', 'is', null),
   ])
 
   const rules: Rule[] = rulesRes.data ?? []
@@ -247,7 +247,7 @@ export async function POST() {
         console.log(`[sync-competitors] item=${item.id} sku=${item.our_sku} prevPrice=${item.price} newPrice=${newPrice} ourPrice=${ourPriceMap[item.our_sku] ?? 'NOT_FOUND'}`)
 
         const { error: updateError } = await admin
-          .from('ml_competitor_items')
+          .schema('ml').from('ml_competitor_items')
           .update(updateData)
           .eq('id', item.id)
           .eq('our_sku', item.our_sku)
@@ -283,7 +283,7 @@ export async function POST() {
   console.log(`[sync-competitors] alerts_to_insert=${alertsToInsert.length}`)
   if (alertsToInsert.length > 0) {
     console.log('[sync-competitors] alerts:', JSON.stringify(alertsToInsert))
-    const { error } = await admin.from('ml_price_alerts').insert(alertsToInsert)
+    const { error } = await admin.schema('ml').from('ml_price_alerts').insert(alertsToInsert)
     if (error) {
       alertError = error.message
       console.error('[sync-competitors] alert insert error:', error.message)
@@ -297,7 +297,7 @@ export async function POST() {
     const nickname = await fetchNickname(pending.seller_id, headers)
     if (nickname) {
       await admin
-        .from('ml_competitor_items')
+        .schema('ml').from('ml_competitor_items')
         .update({ seller_name: nickname })
         .eq('id', pending.id)
         .eq('our_sku', pending.our_sku)

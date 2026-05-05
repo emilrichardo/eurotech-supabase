@@ -147,7 +147,7 @@ export async function POST(req: NextRequest) {
   const admin = createAdminClient()
 
   const { data: tokenRow } = await admin
-    .from('ml_tokens')
+    .schema('ml').from('ml_tokens')
     .select('access_token, user_id')
     .order('expires_at', { ascending: false })
     .limit(1)
@@ -199,7 +199,7 @@ export async function POST(req: NextRequest) {
 
   // Check for duplicate
   const { data: existing } = await admin
-    .from('ml_competitor_items')
+    .schema('ml').from('ml_competitor_items')
     .select('id')
     .eq('id', resolvedId)
     .eq('our_sku', ourSku)
@@ -231,7 +231,7 @@ export async function POST(req: NextRequest) {
     synced_at: new Date().toISOString(),
   }
 
-  const { error } = await admin.from('ml_competitor_items').upsert(record)
+  const { error } = await admin.schema('ml').from('ml_competitor_items').upsert(record)
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
@@ -244,7 +244,7 @@ export async function PATCH(req: NextRequest) {
   const admin = createAdminClient()
 
   const { error } = await admin
-    .from('ml_competitor_items')
+    .schema('ml').from('ml_competitor_items')
     .update({ paused })
     .eq('id', itemId)
     .eq('our_sku', ourSku)
@@ -258,7 +258,7 @@ export async function DELETE(req: NextRequest) {
   const admin = createAdminClient()
 
   const { error } = await admin
-    .from('ml_competitor_items')
+    .schema('ml').from('ml_competitor_items')
     .delete()
     .eq('id', itemId)
     .eq('our_sku', ourSku)

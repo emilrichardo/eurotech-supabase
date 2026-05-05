@@ -28,7 +28,7 @@ export async function GET() {
 
   // Items with latest 2 snapshots (for delta calculation)
   const { data: items, error } = await admin
-    .from('ml_tracked_items')
+    .schema('ml').from('ml_tracked_items')
     .select('*')
     .eq('active', true)
     .order('created_at', { ascending: false })
@@ -40,7 +40,7 @@ export async function GET() {
   if (ids.length === 0) return NextResponse.json([])
 
   const { data: snapshots, error: snapError } = await admin
-    .from('ml_tracked_snapshots')
+    .schema('ml').from('ml_tracked_snapshots')
     .select('*')
     .in('tracked_item_id', ids)
     .order('scraped_at', { ascending: false })
@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
 
   const admin = createAdminClient()
   const { data: tokenRow } = await admin
-    .from('ml_tokens')
+    .schema('ml').from('ml_tokens')
     .select('access_token, user_id')
     .order('expires_at', { ascending: false })
     .limit(1)
@@ -167,7 +167,7 @@ export async function POST(req: NextRequest) {
 
   // Check duplicate
   const { data: existing } = await admin
-    .from('ml_tracked_items')
+    .schema('ml').from('ml_tracked_items')
     .select('id, active')
     .eq('ml_item_id', mlItemId)
     .maybeSingle()
@@ -175,7 +175,7 @@ export async function POST(req: NextRequest) {
   if (existing) {
     // Reactivate if was inactive
     if (!existing.active) {
-      await admin.from('ml_tracked_items').update({ active: true, our_sku: ourSku ?? null }).eq('id', existing.id)
+      await admin.schema('ml').from('ml_tracked_items').update({ active: true, our_sku: ourSku ?? null }).eq('id', existing.id)
       return NextResponse.json({ ok: true, id: existing.id, reactivated: true })
     }
     return NextResponse.json({ error: 'Este producto ya está siendo seguido' }, { status: 409 })
@@ -183,7 +183,7 @@ export async function POST(req: NextRequest) {
 
   // Insert tracked item
   const { data: inserted, error: insertError } = await admin
-    .from('ml_tracked_items')
+    .schema('ml').from('ml_tracked_items')
     .insert({
       ml_item_id: mlItemId,
       url: resolvedUrl,
@@ -210,7 +210,7 @@ export async function POST(req: NextRequest) {
     scraped_at: new Date().toISOString(),
   }
   const { data: insertedSnap } = await admin
-    .from('ml_tracked_snapshots')
+    .schema('ml').from('ml_tracked_snapshots')
     .insert(snapshotInsert)
     .select()
     .single()

@@ -5,7 +5,7 @@ const ML_API = 'https://api.mercadolibre.com'
 
 async function getMlToken(admin: ReturnType<typeof createAdminClient>) {
   const { data } = await admin
-    .from('ml_tokens')
+    .schema('ml').from('ml_tokens')
     .select('access_token, user_id')
     .order('expires_at', { ascending: false })
     .limit(1)
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
   }
 
   // 3. Save to DB
-  const { error } = await admin.from('ml_products').update(updates).eq('id', id)
+  const { error } = await admin.schema('ml').from('ml_products').update(updates).eq('id', id)
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }

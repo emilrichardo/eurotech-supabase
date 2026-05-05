@@ -22,7 +22,7 @@ interface TokenRow {
 
 async function getValidToken(): Promise<TokenRow> {
   const { data, error } = await supabase
-    .from("ml_tokens")
+    .schema("ml").from("ml_tokens")
     .select("*")
     .order("id", { ascending: false })
     .limit(1)
@@ -84,7 +84,7 @@ async function refreshToken(tokenRow: TokenRow): Promise<string> {
   );
 
   await supabase
-    .from("ml_tokens")
+    .schema("ml").from("ml_tokens")
     .update({
       access_token: newToken.access_token,
       refresh_token: newToken.refresh_token ?? tokenRow.refresh_token,
@@ -403,7 +403,7 @@ async function fetchAndUpsertItems(
     if (rows.length === 0) continue;
 
     const { error } = await supabase
-      .from("ml_products")
+      .schema("ml").from("ml_products")
       .upsert(rows, { onConflict: "id" });
 
     if (error) {

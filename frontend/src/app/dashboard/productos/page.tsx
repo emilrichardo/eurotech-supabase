@@ -12,7 +12,7 @@ export default async function ProductosPage() {
     // Those are only needed in the detail panel and are fetched on-demand via
     // /api/product-panel/[sku] when a row is clicked.
     supabase
-      .from('ml_products')
+      .schema('ml').from('ml_products')
       .select(
         `id, title, subtitle, sku, price, sale_price, catalog_price, buybox_price, buybox_seller_id, base_price, original_price, currency_id,
          available_quantity, sold_quantity, initial_quantity,
@@ -28,22 +28,22 @@ export default async function ProductosPage() {
       .limit(5000),
 
     supabase
-      .from('ml_competitor_items')
+      .schema('ml').from('ml_competitor_items')
       .select('id, our_sku, title, price, currency_id, usd_price, status, thumbnail, permalink, seller_id, seller_name, synced_at, paused'),
 
     supabase
-      .from('ml_categories')
+      .schema('ml').from('ml_categories')
       .select('id, name, full_path'),
 
     supabase
-      .from('ml_products')
+      .schema('ml').from('ml_products')
       .select('synced_at')
       .order('synced_at', { ascending: false })
       .limit(1)
       .single(),
 
     supabase
-      .from('ml_competitor_items')
+      .schema('ml').from('ml_competitor_items')
       .select('synced_at')
       .order('synced_at', { ascending: false })
       .limit(1)
