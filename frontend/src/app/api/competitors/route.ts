@@ -123,17 +123,23 @@ async function fetchFromCatalog(
   }
 }
 
-async function fetchFromItem(
+async function fetchItemData(
   itemId: string,
-  accessToken: string
+  headers?: Record<string, string>
 ): Promise<Record<string, unknown> | null> {
-  const res = await fetch(`${ML_API}/items/${itemId}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  })
+  const res = await fetch(`${ML_API}/items/${itemId}`, { headers })
   if (!res.ok) return null
   const data = await res.json()
   if (data.error || !data.title) return null
   return data
+}
+
+async function fetchFromItem(
+  itemId: string,
+  accessToken: string
+): Promise<Record<string, unknown> | null> {
+  return await fetchItemData(itemId, { Authorization: `Bearer ${accessToken}` })
+    ?? await fetchItemData(itemId)
 }
 
 export async function POST(req: NextRequest) {
