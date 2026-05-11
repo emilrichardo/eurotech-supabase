@@ -165,6 +165,15 @@ type RivalSuggestion = {
 }
 
 type LinkMode = 'mlu' | 'sku'
+type RivalSearchCacheEntry = {
+  candidates: RivalSuggestion[]
+  summary: string
+  costEstimate: string
+  searchedAt: string
+}
+
+const RIVAL_SEARCH_STORAGE_KEY = 'ml-rival-search-results-v1'
+const RIVAL_SEARCH_COST_ESTIMATE = '~US$0.01-0.03'
 
 function AddCompetitorModal({
   initialSku,
@@ -369,14 +378,52 @@ export default function ProductsTable({
   const [currentPage, setCurrentPage] = useState(0)
   const [rivalSuggestions, setRivalSuggestions] = useState<Record<string, RivalSuggestion[]>>({})
   const [rivalSearchSummary, setRivalSearchSummary] = useState<Record<string, string>>({})
+  const [rivalSearchCost, setRivalSearchCost] = useState<Record<string, string>>({})
+  const [rivalResultsCollapsed, setRivalResultsCollapsed] = useState<Record<string, boolean>>({})
   const [rivalSearchLoadingId, setRivalSearchLoadingId] = useState<string | null>(null)
   const [rivalSearchError, setRivalSearchError] = useState<string | null>(null)
   const [addingSuggestionKey, setAddingSuggestionKey] = useState<string | null>(null)
 
   useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(RIVAL_SEARCH_STORAGE_KEY)
+      if (!raw) return
+      const cache = JSON.parse(raw) as Record<string, RivalSearchCacheEntry>
+      const suggestions: Record<string, RivalSuggestion[]> = {}
+      const summaries: Record<string, string> = {}
+      const costs: Record<string, string> = {}
+
+      for (const [productId, entry] of Object.entries(cache)) {
+        if (!entry || !Array.isArray(entry.candidates)) continue
+        suggestions[productId] = entry.candidates
+        summaries[productId] = entry.summary ?? ''
+        costs[productId] = entry.costEstimate ?? RIVAL_SEARCH_COST_ESTIMATE
+      }
+
+      setRivalSuggestions(suggestions)
+      setRivalSearchSummary(summaries)
+      setRivalSearchCost(costs)
+    } catch {
+      window.localStorage.removeItem(RIVAL_SEARCH_STORAGE_KEY)
+    }
+  }, [])
+
+  useEffect(() => {
     setRivalSearchError(null)
     setOpenGear(null)
   }, [selected?.id])
+
+  function persistRivalSearch(productId: string, entry: RivalSearchCacheEntry | null) {
+    try {
+      const raw = window.localStorage.getItem(RIVAL_SEARCH_STORAGE_KEY)
+      const cache = raw ? JSON.parse(raw) as Record<string, RivalSearchCacheEntry> : {}
+      if (entry) cache[productId] = entry
+      else delete cache[productId]
+      window.localStorage.setItem(RIVAL_SEARCH_STORAGE_KEY, JSON.stringify(cache))
+    } catch {
+      // Local storage is best-effort only.
+    }
+  }
 
   async function handleSyncProduct(productId: string) {
     setSyncingProduct(true)
@@ -442,6 +489,8 @@ export default function ProductsTable({
   async function handleSearchRivals(product: Product) {
     setRivalSearchLoadingId(product.id)
     setRivalSearchError(null)
+    setRivalSearchCost(prev => ({ ...prev, [product.id]: RIVAL_SEARCH_COST_ESTIMATE }))
+    setRivalResultsCollapsed(prev => ({ ...prev, [product.id]: false }))
     try {
       const res = await fetch('/api/rival-search', {
         method: 'POST',
@@ -450,14 +499,24 @@ export default function ProductsTable({
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'No se pudieron buscar rivales')
+      const candidates = Array.isArray(data.candidates) ? data.candidates : []
+      const summary = typeof data.summary === 'string' ? data.summary : ''
+      const costEstimate = typeof data.cost_estimate_usd === 'string' ? data.cost_estimate_usd : RIVAL_SEARCH_COST_ESTIMATE
       setRivalSuggestions(prev => ({
         ...prev,
-        [product.id]: Array.isArray(data.candidates) ? data.candidates : [],
+        [product.id]: candidates,
       }))
       setRivalSearchSummary(prev => ({
         ...prev,
-        [product.id]: typeof data.summary === 'string' ? data.summary : '',
+        [product.id]: summary,
       }))
+      setRivalSearchCost(prev => ({ ...prev, [product.id]: costEstimate }))
+      persistRivalSearch(product.id, {
+        candidates,
+        summary,
+        costEstimate,
+        searchedAt: new Date().toISOString(),
+      })
     } catch (e) {
       setRivalSearchError(e instanceof Error ? e.message : 'No se pudieron buscar rivales')
     } finally {
@@ -484,15 +543,48 @@ export default function ProductsTable({
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'No se pudo agregar el rival')
       handleAdded(data.item)
-      setRivalSuggestions(prev => ({
-        ...prev,
-        [product.id]: (prev[product.id] ?? []).filter(s => (s.item_id ?? s.url) !== suggestionKey),
-      }))
+      setRivalSuggestions(prev => {
+        const nextSuggestions = (prev[product.id] ?? []).filter(s => (s.item_id ?? s.url) !== suggestionKey)
+        persistRivalSearch(product.id, {
+          candidates: nextSuggestions,
+          summary: rivalSearchSummary[product.id] ?? '',
+          costEstimate: rivalSearchCost[product.id] ?? RIVAL_SEARCH_COST_ESTIMATE,
+          searchedAt: new Date().toISOString(),
+        })
+        return {
+          ...prev,
+          [product.id]: nextSuggestions,
+        }
+      })
     } catch (e) {
       setRivalSearchError(e instanceof Error ? e.message : 'No se pudo agregar el rival')
     } finally {
       setAddingSuggestionKey(null)
     }
+  }
+
+  function handleDeleteRivalSearch(productId: string) {
+    setRivalSuggestions(prev => {
+      const next = { ...prev }
+      delete next[productId]
+      return next
+    })
+    setRivalSearchSummary(prev => {
+      const next = { ...prev }
+      delete next[productId]
+      return next
+    })
+    setRivalSearchCost(prev => {
+      const next = { ...prev }
+      delete next[productId]
+      return next
+    })
+    setRivalResultsCollapsed(prev => {
+      const next = { ...prev }
+      delete next[productId]
+      return next
+    })
+    persistRivalSearch(productId, null)
   }
 
   // Collect unique categories with names for filter
@@ -911,6 +1003,8 @@ export default function ProductsTable({
         const suggestions = selected ? (rivalSuggestions[selected.id] ?? []) : []
         const hasSearchedRivals = selected ? Object.prototype.hasOwnProperty.call(rivalSuggestions, selected.id) : false
         const rivalSearchLoading = selected ? rivalSearchLoadingId === selected.id : false
+        const rivalSearchCollapsed = selected ? (rivalResultsCollapsed[selected.id] ?? false) : false
+        const currentCostEstimate = selected ? (rivalSearchCost[selected.id] ?? RIVAL_SEARCH_COST_ESTIMATE) : RIVAL_SEARCH_COST_ESTIMATE
         const pubPrice = selected?.price ?? null
         const salePrice = selected?.sale_price ?? null
         const catPrice = selected?.catalog_price ?? null
@@ -1107,25 +1201,32 @@ export default function ProductsTable({
                   <div className="p-4 space-y-4">
                     {/* Toolbar */}
                     <div className="flex items-center justify-between gap-2">
-                      <button
-                        onClick={() => handleSearchRivals(selected)}
-                        disabled={rivalSearchLoading}
-                        className="flex items-center gap-2 text-xs font-medium bg-gray-900 text-white px-3 py-1.5 rounded-lg hover:bg-gray-800 disabled:opacity-70 transition-colors"
-                      >
-                        <span className="relative flex h-4 w-4 items-center justify-center">
-                          {rivalSearchLoading && (
-                            <>
-                              <span className="absolute h-4 w-4 rounded-full border border-white/50 animate-ping" />
-                              <span className="absolute h-2 w-2 rounded-full bg-white/30 animate-pulse" />
-                            </>
-                          )}
-                          <svg className="relative z-10 w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 4l1.8 4.2L17 10l-4.2 1.8L11 16l-1.8-4.2L5 10l4.2-1.8L11 4z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9L18 14z" />
-                          </svg>
-                        </span>
-                        {rivalSearchLoading ? 'Buscando con IA...' : 'Buscar rivales con IA'}
-                      </button>
+                      <div className="flex flex-col items-start gap-1">
+                        <button
+                          onClick={() => handleSearchRivals(selected)}
+                          disabled={rivalSearchLoading}
+                          className="flex items-center gap-2 text-xs font-medium bg-gray-900 text-white px-3 py-1.5 rounded-lg hover:bg-gray-800 disabled:opacity-70 transition-colors"
+                        >
+                          <span className="relative flex h-4 w-4 items-center justify-center">
+                            {rivalSearchLoading && (
+                              <>
+                                <span className="absolute h-4 w-4 rounded-full border border-white/50 animate-ping" />
+                                <span className="absolute h-2 w-2 rounded-full bg-white/30 animate-pulse" />
+                              </>
+                            )}
+                            <svg className="relative z-10 w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 4l1.8 4.2L17 10l-4.2 1.8L11 16l-1.8-4.2L5 10l4.2-1.8L11 4z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9L18 14z" />
+                            </svg>
+                          </span>
+                          {rivalSearchLoading ? 'Buscando con IA...' : 'Buscar rivales con IA'}
+                        </button>
+                        {(rivalSearchLoading || hasSearchedRivals) && (
+                          <span className="text-[11px] text-gray-400 px-1">
+                            Costo estimado: {currentCostEstimate}
+                          </span>
+                        )}
+                      </div>
                       <button
                         onClick={() => setShowAddModal(true)}
                         className="flex items-center gap-1 text-xs font-medium bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 transition-colors"
@@ -1143,18 +1244,38 @@ export default function ProductsTable({
                               <p className="text-xs text-blue-700/70 mt-0.5">{rivalSearchSummary[selected.id]}</p>
                             )}
                           </div>
-                          {suggestions.length > 0 && (
-                            <span className="text-[11px] font-semibold text-blue-700 bg-white border border-blue-100 px-2 py-0.5 rounded-full">
-                              {suggestions.length}
-                            </span>
-                          )}
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {suggestions.length > 0 && (
+                              <span className="text-[11px] font-semibold text-blue-700 bg-white border border-blue-100 px-2 py-0.5 rounded-full">
+                                {suggestions.length}
+                              </span>
+                            )}
+                            {hasSearchedRivals && (
+                              <>
+                                <button
+                                  onClick={() => setRivalResultsCollapsed(prev => ({ ...prev, [selected.id]: !rivalSearchCollapsed }))}
+                                  className="w-7 h-7 rounded-full bg-white border border-blue-100 text-blue-600 hover:bg-blue-50 transition-colors"
+                                  title={rivalSearchCollapsed ? 'Desplegar resultados' : 'Plegar resultados'}
+                                >
+                                  {rivalSearchCollapsed ? '+' : '−'}
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteRivalSearch(selected.id)}
+                                  className="w-7 h-7 rounded-full bg-white border border-red-100 text-red-500 hover:bg-red-50 transition-colors"
+                                  title="Eliminar resultados guardados"
+                                >
+                                  ×
+                                </button>
+                              </>
+                            )}
+                          </div>
                         </div>
 
-                        {rivalSearchError && (
+                        {!rivalSearchCollapsed && rivalSearchError && (
                           <p className="text-sm text-red-600 bg-white border border-red-100 rounded-lg px-3 py-2">{rivalSearchError}</p>
                         )}
 
-                        {rivalSearchLoading && suggestions.length === 0 && (
+                        {!rivalSearchCollapsed && rivalSearchLoading && suggestions.length === 0 && (
                           <div className="space-y-2">
                             {[0, 1, 2].map(i => (
                               <div key={i} className="h-16 bg-white/70 border border-blue-100 rounded-lg animate-pulse" />
@@ -1162,13 +1283,13 @@ export default function ProductsTable({
                           </div>
                         )}
 
-                        {!rivalSearchLoading && hasSearchedRivals && suggestions.length === 0 && !rivalSearchError && (
+                        {!rivalSearchCollapsed && !rivalSearchLoading && hasSearchedRivals && suggestions.length === 0 && !rivalSearchError && (
                           <p className="text-sm text-blue-700/70 bg-white border border-blue-100 rounded-lg px-3 py-2">
                             No aparecieron rivales nuevos para este producto.
                           </p>
                         )}
 
-                        {suggestions.length > 0 && (
+                        {!rivalSearchCollapsed && suggestions.length > 0 && (
                           <div className="space-y-2">
                             {suggestions.map((suggestion) => {
                               const suggestionKey = suggestion.item_id ?? suggestion.url
@@ -1210,13 +1331,23 @@ export default function ProductsTable({
                                         </p>
                                         <p className="text-xs text-gray-500 line-clamp-2">{suggestion.reason}</p>
                                       </div>
-                                      <button
-                                        onClick={() => handleAddSuggestedCompetitor(suggestion, selected, skuKey)}
-                                        disabled={alreadyLinked || addingSuggestionKey === suggestionKey}
-                                        className="shrink-0 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
-                                      >
-                                        {alreadyLinked ? 'Agregado' : addingSuggestionKey === suggestionKey ? 'Agregando...' : 'Agregar como rival'}
-                                      </button>
+                                      <div className="shrink-0 flex flex-col gap-1.5">
+                                        <a
+                                          href={suggestion.url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="px-3 py-1.5 rounded-lg border border-blue-200 text-blue-700 text-xs font-medium hover:bg-blue-50 transition-colors text-center"
+                                        >
+                                          Abrir
+                                        </a>
+                                        <button
+                                          onClick={() => handleAddSuggestedCompetitor(suggestion, selected, skuKey)}
+                                          disabled={alreadyLinked || addingSuggestionKey === suggestionKey}
+                                          className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                                        >
+                                          {alreadyLinked ? 'Agregado' : addingSuggestionKey === suggestionKey ? 'Agregando...' : 'Agregar como rival'}
+                                        </button>
+                                      </div>
                                     </div>
                                   </div>
                                 </div>

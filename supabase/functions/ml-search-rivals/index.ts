@@ -1,6 +1,8 @@
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-const OPENAI_MODEL = Deno.env.get("OPENAI_MODEL") ?? "gpt-5-nano";
+const OPENAI_MODEL = Deno.env.get("OPENAI_MODEL") ?? "gpt-5-mini";
+const RIVAL_SEARCH_STRICT_JSON = Deno.env.get("RIVAL_SEARCH_STRICT_JSON") === "true";
 const RIVAL_SEARCH_RETRY_ON_PARSE_ERROR = Deno.env.get("RIVAL_SEARCH_RETRY_ON_PARSE_ERROR") === "true";
+const RIVAL_SEARCH_TOOL_CHOICE = Deno.env.get("RIVAL_SEARCH_TOOL_CHOICE") ?? "required";
 const RIVAL_SEARCH_SECRET = Deno.env.get("RIVAL_SEARCH_SECRET");
 
 const corsHeaders = {
@@ -219,6 +221,57 @@ function extractSources(data: Record<string, unknown>): string[] {
   return [...urls];
 }
 
+function looksLikeProductUrl(url: string): boolean {
+  return /mercadolibre\.com\.uy\/(?:p|up)\//i.test(url) ||
+    /mercadolibre\.com\.uy\/.*MLU-?\d+/i.test(url) ||
+    /[?&#]wid=MLU\d+/i.test(url);
+}
+
+function titleFromUrl(url: string, itemId: string | null): string {
+  try {
+    const parsed = new URL(url);
+    const slug = parsed.pathname
+      .split("/")
+      .filter(Boolean)
+      .find((part) => !/^ML[A-Z]+-?\d+$/i.test(part) && part !== "p" && part !== "up");
+    if (slug) {
+      return slug
+        .replace(/-/g, " ")
+        .replace(/\b\w/g, (char) => char.toUpperCase())
+        .trim();
+    }
+  } catch {
+    // keep fallback below
+  }
+
+  return itemId ? `Producto rival ${itemId}` : "Producto rival encontrado";
+}
+
+function candidatesFromSources(sources: string[], limit: number): RivalCandidate[] {
+  return sources
+    .map(normalizeUrl)
+    .filter((url) => url.includes("mercadolibre.com.uy") && looksLikeProductUrl(url))
+    .map((url) => {
+      const itemId = extractMlId(url);
+      return {
+        title: titleFromUrl(url, itemId),
+        url,
+        item_id: itemId,
+        seller_name: null,
+        price: null,
+        currency_id: null,
+        thumbnail: null,
+        confidence: 0.45,
+        reason: "Fuente encontrada en Mercado Libre; revisar similitud antes de agregar.",
+        matched_terms: [],
+      };
+    })
+    .filter((candidate, index, arr) =>
+      arr.findIndex((other) => (other.item_id ?? other.url) === (candidate.item_id ?? candidate.url)) === index
+    )
+    .slice(0, limit);
+}
+
 function summarizeOutput(data: Record<string, unknown>) {
   const output = data.output;
   if (!Array.isArray(output)) {
@@ -246,10 +299,49 @@ function summarizeOutput(data: Record<string, unknown>) {
   };
 }
 
+function buildSearchHints(payload: Required<Pick<SearchPayload, "title">> & SearchPayload): string[] {
+  const title = payload.title
+    .replace(/\bEurotech\b/gi, " ")
+    .replace(/\bSKU[:\s-]*[\w-]+\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const tokens = title
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .match(/[a-z0-9]+(?:\/[0-9]+)?/g) ?? [];
+
+  const stop = new Set([
+    "para",
+    "con",
+    "sin",
+    "por",
+    "del",
+    "las",
+    "los",
+    "una",
+    "uno",
+    "kit",
+    "set",
+    "x",
+  ]);
+  const keywords = [...new Set(tokens.filter((token) => token.length > 1 && !stop.has(token)))].slice(0, 7);
+  const compact = keywords.join(" ");
+
+  return [
+    title,
+    compact,
+    compact.replace(/\beurotech\b/gi, "").trim(),
+    payload.domainId ? `${compact} ${payload.domainId.replace(/^MLU-/, "").replace(/_/g, " ").toLowerCase()}` : compact,
+  ].map((hint) => hint.trim()).filter((hint, index, arr) => hint && arr.indexOf(hint) === index).slice(0, 4);
+}
+
 function buildPrompt(payload: Required<Pick<SearchPayload, "title">> & SearchPayload, limit: number) {
   const description = payload.description?.trim() || "Sin descripcion disponible.";
   const existingIds = (payload.existingCompetitorIds ?? []).filter(Boolean).join(", ") || "ninguno";
   const existingUrls = (payload.existingCompetitorUrls ?? []).filter(Boolean).join("\n") || "ninguna";
+  const searchHints = buildSearchHints(payload).map((hint) => `- ${hint}`).join("\n");
 
   return [
     "Buscá en Mercado Libre Uruguay productos actualmente disponibles que compitan contra nuestro producto.",
@@ -263,12 +355,16 @@ function buildPrompt(payload: Required<Pick<SearchPayload, "title">> & SearchPay
     `- Dominio ML: ${payload.domainId ?? "desconocido"}`,
     `- Precio actual: ${payload.price ?? "desconocido"} ${payload.currencyId ?? ""}`.trim(),
     "",
+    "Para buscar, NO uses el SKU ni la marca propia como restriccion principal. Ignora la marca Eurotech si aparece y buscá por tipo de producto, medidas, encastre, modelo y sinonimos.",
+    "Probá estas consultas base y variantes equivalentes en Mercado Libre Uruguay antes de concluir que no hay rivales:",
+    searchHints || `- ${payload.title}`,
+    "",
     `Devolvé hasta ${limit} rivales reales. Priorizá publicaciones activas, mismo tipo de producto, marca/modelo compatible, dimensiones o especificaciones similares y vendedores distintos.`,
-    "No incluyas accesorios, repuestos, publicaciones pausadas, productos usados si el nuestro es nuevo salvo que sea claramente comparable, ni resultados del mismo producto propio.",
+    "Incluí candidatos con confianza media si compiten por uso aunque no tengan exactamente la misma marca. No incluyas accesorios sueltos, repuestos, publicaciones pausadas, productos usados si el nuestro es nuevo salvo que sea claramente comparable, ni resultados del mismo producto propio.",
     `No repitas competidores ya vinculados. IDs existentes: ${existingIds}. URLs existentes:\n${existingUrls}`,
     "Usá solamente URLs de mercadolibre.com.uy y preferí URLs de catálogo /p/ o /up/ cuando estén disponibles.",
     "El campo confidence debe ir de 0 a 1. El campo reason debe explicar brevemente por qué compite.",
-    "Respondé solo con JSON que cumpla el schema.",
+    "Respondé solo con un objeto JSON valido. No uses markdown, explicaciones, ni texto fuera del JSON.",
   ].join("\n");
 }
 
@@ -317,7 +413,7 @@ function buildOpenAIRequest(
         search_context_size: "low",
       },
     ],
-    tool_choice: "auto",
+    tool_choice: RIVAL_SEARCH_TOOL_CHOICE,
     instructions: [
       "Sos un analista senior de e-commerce en Uruguay.",
       "Tu tarea es encontrar publicaciones rivales reales en Mercado Libre Uruguay.",
@@ -397,7 +493,7 @@ Deno.serve(async (req) => {
 
     const limit = clampLimit(payload.limit);
     const requestPayload = { ...payload, title };
-    let raw = await requestOpenAI(buildOpenAIRequest(requestPayload, limit, true));
+    let raw = await requestOpenAI(buildOpenAIRequest(requestPayload, limit, RIVAL_SEARCH_STRICT_JSON));
     let outputText = extractOutputText(raw);
     let parsed: RivalSearchResult | null = null;
 
@@ -408,8 +504,8 @@ Deno.serve(async (req) => {
     }
 
     if (!parsed && RIVAL_SEARCH_RETRY_ON_PARSE_ERROR) {
-      console.warn("Retrying rival search without strict schema", summarizeOutput(raw));
-      raw = await requestOpenAI(buildOpenAIRequest(requestPayload, limit, false));
+      console.warn("Retrying rival search with alternate JSON mode", summarizeOutput(raw));
+      raw = await requestOpenAI(buildOpenAIRequest(requestPayload, limit, !RIVAL_SEARCH_STRICT_JSON));
       outputText = extractOutputText(raw);
       if (!outputText) {
         return jsonResponse({
@@ -430,6 +526,20 @@ Deno.serve(async (req) => {
     }
 
     if (!parsed) {
+      const sources = extractSources(raw);
+      const sourceCandidates = candidatesFromSources(sources, limit);
+      if (sourceCandidates.length > 0) {
+        return jsonResponse({
+          success: true,
+          model: OPENAI_MODEL,
+          query: title,
+          summary: "OpenAI no devolvio JSON valido, pero se encontraron fuentes de Mercado Libre para revisar.",
+          candidates: sourceCandidates,
+          sources,
+          searched_at: new Date().toISOString(),
+        });
+      }
+
       return jsonResponse({
         error: "OpenAI no devolvio JSON valido en el intento economico",
         debug: summarizeOutput(raw),
@@ -437,7 +547,8 @@ Deno.serve(async (req) => {
     }
 
     const existing = new Set((payload.existingCompetitorIds ?? []).map((id) => id.toUpperCase()));
-    const candidates = (parsed.candidates ?? [])
+    const sources = extractSources(raw);
+    let candidates = (parsed.candidates ?? [])
       .map(normalizeCandidate)
       .filter((candidate): candidate is RivalCandidate => {
         if (!candidate) return false;
@@ -446,13 +557,18 @@ Deno.serve(async (req) => {
       })
       .slice(0, limit);
 
+    if (candidates.length === 0) {
+      candidates = candidatesFromSources(sources, limit)
+        .filter((candidate) => !candidate.item_id || !existing.has(candidate.item_id.toUpperCase()));
+    }
+
     return jsonResponse({
       success: true,
       model: OPENAI_MODEL,
       query: parsed.query,
       summary: parsed.summary,
       candidates,
-      sources: extractSources(raw),
+      sources,
       searched_at: new Date().toISOString(),
     });
   } catch (err) {
