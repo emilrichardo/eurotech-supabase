@@ -196,8 +196,8 @@ interface MLItem {
   accepts_mercadopago?: boolean;
   non_mercado_pago_payment_methods?: unknown;
   shipping?: unknown;
-  attributes?: { id: string; value_name: string | null }[];
-  variations?: unknown;
+  attributes?: MLAttribute[];
+  variations?: MLVariation[];
   sale_terms?: unknown;
   descriptions?: unknown;
   warranty?: string;
@@ -220,16 +220,56 @@ interface MLItem {
   channels?: unknown;
 }
 
-function extractSku(attributes: MLItem["attributes"]): string | null {
+interface MLAttribute {
+  id?: string;
+  value_name?: string | null;
+  values?: { name?: string | null }[];
+}
+
+interface MLVariation {
+  seller_custom_field?: string | null;
+  attributes?: MLAttribute[];
+  attribute_combinations?: MLAttribute[];
+}
+
+function cleanSku(value: unknown): string | null {
+  if (typeof value === "number") return String(value);
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function extractSkuFromAttributes(attributes: unknown): string | null {
   if (!Array.isArray(attributes)) return null;
-  const attr = attributes.find((a) => a.id === "SELLER_SKU");
-  return attr?.value_name ?? null;
+  const attr = attributes.find((a) => a?.id === "SELLER_SKU") as MLAttribute | undefined;
+  return cleanSku(attr?.value_name) ?? cleanSku(attr?.values?.[0]?.name);
+}
+
+function extractSku(item: MLItem): string | null {
+  const directSku =
+    extractSkuFromAttributes(item.attributes) ??
+    cleanSku(item.seller_custom_field);
+
+  if (directSku) return directSku;
+
+  if (!Array.isArray(item.variations)) return null;
+
+  for (const variation of item.variations) {
+    const variationSku =
+      cleanSku(variation.seller_custom_field) ??
+      extractSkuFromAttributes(variation.attributes) ??
+      extractSkuFromAttributes(variation.attribute_combinations);
+
+    if (variationSku) return variationSku;
+  }
+
+  return null;
 }
 
 function mapItemToRow(item: MLItem) {
   return {
     id: item.id,
-    sku: extractSku(item.attributes),
+    sku: extractSku(item),
     site_id: item.site_id ?? null,
     catalog_product_id: item.catalog_product_id ?? null,
     parent_item_id: item.parent_item_id ?? null,

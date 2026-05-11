@@ -298,6 +298,7 @@ function CompetitorDot({ count }: { count: number }) {
 }
 
 type ViewMode = 'tabla' | 'listado' | 'grid'
+type CompetitorFilter = 'all' | 'with' | 'without'
 
 function IconTable() {
   return (
@@ -359,7 +360,7 @@ export default function ProductsTable({
   const [localCompetitors, setLocalCompetitors] = useState<Record<string, Competitor[]>>(competitorsBySku)
   const [showAddModal, setShowAddModal] = useState(false)
   const [search, setSearch] = useState('')
-  const [onlyWithCompetitors, setOnlyWithCompetitors] = useState(false)
+  const [competitorFilter, setCompetitorFilter] = useState<CompetitorFilter>('all')
   const [showPaused, setShowPaused] = useState(false)
   const [panelTab, setPanelTab] = useState<'competitors' | 'details'>('competitors')
   const [openGear, setOpenGear] = useState<string | null>(null)
@@ -504,20 +505,23 @@ export default function ProductsTable({
   function resetPage() { setCurrentPage(0) }
 
   const pausedCount = products.filter(p => p.status === 'paused').length
+  const trimmedSearch = search.trim()
+  const hasSearch = trimmedSearch.length > 0
 
   const filteredProducts = products.filter(p => {
-    if (!showPaused && p.status === 'paused') return false
-    if (search.trim()) {
-      const q = search.toLowerCase()
+    if (!hasSearch && !showPaused && p.status === 'paused') return false
+    if (hasSearch) {
+      const q = trimmedSearch.toLowerCase()
       if (
         !p.title?.toLowerCase().includes(q) &&
         !p.sku?.toLowerCase().includes(q) &&
+        !p.seller_custom_field?.toLowerCase().includes(q) &&
         !p.id.toLowerCase().includes(q)
       ) return false
     }
-    if (onlyWithCompetitors) {
-      if (!p.sku || !(localCompetitors[p.sku]?.length > 0)) return false
-    }
+    const competitorCount = p.sku ? (localCompetitors[p.sku]?.length ?? 0) : 0
+    if (competitorFilter === 'with' && competitorCount === 0) return false
+    if (competitorFilter === 'without' && competitorCount > 0) return false
     if (selectedCategory && p.category_id !== selectedCategory) return false
     return true
   }).sort((a, b) => {
@@ -532,6 +536,42 @@ export default function ProductsTable({
 
   const totalPages = Math.ceil(filteredProducts.length / PAGE_SIZE)
   const pagedProducts = filteredProducts.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE)
+  const hiddenFilterLabels = [
+    competitorFilter === 'with' ? 'con rivales' : null,
+    competitorFilter === 'without' ? 'sin rivales' : null,
+    selectedCategory ? 'categoria' : null,
+    !showPaused && !hasSearch ? 'sin pausados' : null,
+  ].filter(Boolean)
+
+  function clearFilters() {
+    setCompetitorFilter('all')
+    setSelectedCategory(null)
+    setShowPaused(false)
+    resetPage()
+  }
+
+  function EmptyProductsState() {
+    return (
+      <div className="bg-white rounded-xl border border-gray-100 px-6 py-12 text-center">
+        <p className="text-sm font-medium text-gray-900">No hay productos para mostrar</p>
+        <p className="text-sm text-gray-400 mt-1">
+          {hasSearch
+            ? `No encontramos "${trimmedSearch}" con los filtros activos.`
+            : hiddenFilterLabels.length > 0
+              ? `Filtros activos: ${hiddenFilterLabels.join(', ')}.`
+              : 'No hay productos sincronizados para esta vista.'}
+        </p>
+        {(competitorFilter !== 'all' || selectedCategory) && (
+          <button
+            onClick={clearFilters}
+            className="mt-4 px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            Limpiar filtros
+          </button>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="relative">
@@ -572,17 +612,26 @@ export default function ProductsTable({
         </select>
 
         {/* Competitors filter */}
-        <button
-          onClick={() => { setOnlyWithCompetitors(v => !v); resetPage() }}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-            onlyWithCompetitors
-              ? 'bg-orange-50 border-orange-300 text-orange-700'
-              : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
-          }`}
-        >
-          <span className="w-2 h-2 rounded-full bg-orange-400 inline-block" />
-          Con rivales
-        </button>
+        <div className="inline-flex items-center rounded-lg border border-gray-200 bg-white p-0.5">
+          {([
+            ['all', 'Todos'],
+            ['with', 'Con rivales'],
+            ['without', 'Sin rivales'],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => { setCompetitorFilter(value); resetPage() }}
+              className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                competitorFilter === value
+                  ? 'bg-gray-900 text-white shadow-sm'
+                  : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
 
         {pausedCount > 0 && (
           <button
@@ -614,6 +663,10 @@ export default function ProductsTable({
         </div>
       </div>
 
+      {filteredProducts.length === 0 ? (
+        <EmptyProductsState />
+      ) : (
+        <>
       {/* Vista: Tabla */}
       {view === 'tabla' && (
         <div className="bg-white rounded-xl border border-gray-100 overflow-hidden w-full">
@@ -846,6 +899,8 @@ export default function ProductsTable({
             </button>
           </div>
         </div>
+      )}
+        </>
       )}
 
       {/* Detail panel — slides in from the right */}

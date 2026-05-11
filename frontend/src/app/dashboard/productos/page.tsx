@@ -4,6 +4,58 @@ import SyncButton from './SyncButton'
 
 export const dynamic = 'force-dynamic'
 
+const PRODUCT_SELECT = `id, title, subtitle, sku, price, sale_price, catalog_price, buybox_price, buybox_seller_id, base_price, original_price, currency_id,
+ available_quantity, sold_quantity, initial_quantity,
+ status, condition, listing_type_id, buying_mode,
+ thumbnail, permalink, category_id, domain_id,
+ catalog_product_id, seller_custom_field,
+ warranty, health, automatic_relist, catalog_listing,
+ date_created, last_updated, synced_at, start_time, stop_time`
+
+const COMPETITOR_SELECT = 'id, our_sku, title, price, currency_id, usd_price, status, thumbnail, permalink, seller_id, seller_name, synced_at, paused'
+
+async function fetchAllProducts(supabase: ReturnType<typeof createAdminClient>) {
+  const pageSize = 1000
+  const rows: unknown[] = []
+  let totalCount: number | null = null
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error, count } = await supabase
+      .schema('ml').from('ml_products')
+      .select(PRODUCT_SELECT, { count: from === 0 ? 'exact' : undefined })
+      .neq('status', 'closed')
+      .order('last_updated', { ascending: false })
+      .range(from, from + pageSize - 1)
+
+    if (error) return { data: rows, error, count: totalCount }
+    if (from === 0) totalCount = count
+    rows.push(...(data ?? []))
+
+    if (!data || data.length < pageSize) break
+    if (totalCount !== null && rows.length >= totalCount) break
+  }
+
+  return { data: rows, error: null, count: totalCount ?? rows.length }
+}
+
+async function fetchAllCompetitors(supabase: ReturnType<typeof createAdminClient>) {
+  const pageSize = 1000
+  const rows: unknown[] = []
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .schema('ml').from('ml_competitor_items')
+      .select(COMPETITOR_SELECT)
+      .range(from, from + pageSize - 1)
+
+    if (error) return { data: rows, error }
+    rows.push(...(data ?? []))
+    if (!data || data.length < pageSize) break
+  }
+
+  return { data: rows, error: null }
+}
+
 export default async function ProductosPage() {
   const supabase = createAdminClient()
 
@@ -11,25 +63,9 @@ export default async function ProductosPage() {
     // List query: exclude heavy JSONB fields (pictures, shipping, tags, attributes).
     // Those are only needed in the detail panel and are fetched on-demand via
     // /api/product-panel/[sku] when a row is clicked.
-    supabase
-      .schema('ml').from('ml_products')
-      .select(
-        `id, title, subtitle, sku, price, sale_price, catalog_price, buybox_price, buybox_seller_id, base_price, original_price, currency_id,
-         available_quantity, sold_quantity, initial_quantity,
-         status, condition, listing_type_id, buying_mode,
-         thumbnail, permalink, category_id, domain_id,
-         catalog_product_id, seller_custom_field,
-         warranty, health, automatic_relist, catalog_listing,
-         date_created, last_updated, synced_at, start_time, stop_time`,
-        { count: 'exact' }
-      )
-      .neq('status', 'closed')
-      .order('last_updated', { ascending: false })
-      .limit(5000),
+    fetchAllProducts(supabase),
 
-    supabase
-      .schema('ml').from('ml_competitor_items')
-      .select('id, our_sku, title, price, currency_id, usd_price, status, thumbnail, permalink, seller_id, seller_name, synced_at, paused'),
+    fetchAllCompetitors(supabase),
 
     supabase
       .schema('ml').from('ml_categories')
@@ -51,11 +87,12 @@ export default async function ProductosPage() {
   ])
 
   const { data: products, error, count } = productsResult
-  const competitors = competitorsResult.data ?? []
+  const competitors = (competitorsResult.data ?? []) as { our_sku: string }[]
   const lastProductSync = lastProductSyncResult.data?.synced_at ?? null
   const lastCompetitorSync = lastCompetitorSyncResult.data?.synced_at ?? null
   const categoryMap: Record<string, string> = {}
-  for (const c of categoriesResult.data ?? []) {
+  const categories = (categoriesResult.data ?? []) as { id: string; name: string; full_path: string | null }[]
+  for (const c of categories) {
     categoryMap[c.id] = c.full_path ?? c.name
   }
 
