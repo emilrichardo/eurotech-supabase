@@ -159,7 +159,7 @@ export async function POST(req: NextRequest) {
       currencyId: product.currency_id,
       existingCompetitorIds: (competitorsResult.data ?? []).map((item) => item.id).filter(Boolean),
       existingCompetitorUrls: (competitorsResult.data ?? []).map((item) => item.permalink).filter(Boolean),
-      limit: typeof limit === 'number' ? limit : 8,
+      limit: typeof limit === 'number' ? limit : 5,
     }),
   })
 

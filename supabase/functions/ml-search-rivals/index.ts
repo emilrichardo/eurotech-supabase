@@ -1,5 +1,6 @@
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-const OPENAI_MODEL = Deno.env.get("OPENAI_MODEL") ?? "gpt-5";
+const OPENAI_MODEL = Deno.env.get("OPENAI_MODEL") ?? "gpt-5-nano";
+const RIVAL_SEARCH_RETRY_ON_PARSE_ERROR = Deno.env.get("RIVAL_SEARCH_RETRY_ON_PARSE_ERROR") === "true";
 const RIVAL_SEARCH_SECRET = Deno.env.get("RIVAL_SEARCH_SECRET");
 
 const corsHeaders = {
@@ -40,6 +41,8 @@ type RivalSearchResult = {
   summary: string;
   candidates: RivalCandidate[];
 };
+
+class OpenAIRequestError extends Error {}
 
 const resultSchema = {
   type: "object",
@@ -122,8 +125,8 @@ function asNumber(value: unknown): number | null {
 }
 
 function clampLimit(value: unknown): number {
-  const parsed = asNumber(value) ?? 8;
-  return Math.max(1, Math.min(10, Math.round(parsed)));
+  const parsed = asNumber(value) ?? 5;
+  return Math.max(1, Math.min(6, Math.round(parsed)));
 }
 
 function extractMlId(value: string): string | null {
@@ -167,24 +170,29 @@ function normalizeCandidate(candidate: RivalCandidate): RivalCandidate | null {
 }
 
 function extractOutputText(data: Record<string, unknown>): string | null {
-  if (typeof data.output_text === "string") return data.output_text;
+  if (typeof data.output_text === "string" && data.output_text.trim()) return data.output_text;
 
   const output = data.output;
   if (!Array.isArray(output)) return null;
+  const chunks: string[] = [];
 
   for (const item of output) {
     if (!item || typeof item !== "object") continue;
     const content = (item as { content?: unknown }).content;
+    if (typeof content === "string") {
+      chunks.push(content);
+      continue;
+    }
     if (!Array.isArray(content)) continue;
 
     for (const part of content) {
       if (!part || typeof part !== "object") continue;
       const text = (part as { text?: unknown }).text;
-      if (typeof text === "string") return text;
+      if (typeof text === "string" && text.trim()) chunks.push(text);
     }
   }
 
-  return null;
+  return chunks.length > 0 ? chunks.join("\n") : null;
 }
 
 function extractSources(data: Record<string, unknown>): string[] {
@@ -268,6 +276,101 @@ function supportsReasoning(model: string): boolean {
   return model.startsWith("gpt-5") || /^o\d/.test(model);
 }
 
+function extractJsonText(text: string): string {
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) return fenced[1].trim();
+
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) return trimmed.slice(start, end + 1);
+
+  return trimmed;
+}
+
+function parseRivalSearchResult(text: string): RivalSearchResult {
+  return JSON.parse(extractJsonText(text)) as RivalSearchResult;
+}
+
+function buildOpenAIRequest(
+  payload: Required<Pick<SearchPayload, "title">> & SearchPayload,
+  limit: number,
+  strictJson: boolean,
+) {
+  const requestBody: Record<string, unknown> = {
+    model: OPENAI_MODEL,
+    store: false,
+    include: ["web_search_call.action.sources"],
+    tools: [
+      {
+        type: "web_search",
+        filters: {
+          allowed_domains: ["mercadolibre.com.uy"],
+        },
+        user_location: {
+          type: "approximate",
+          country: "UY",
+          city: "Montevideo",
+          region: "Montevideo",
+          timezone: "America/Montevideo",
+        },
+        search_context_size: "low",
+      },
+    ],
+    tool_choice: "auto",
+    instructions: [
+      "Sos un analista senior de e-commerce en Uruguay.",
+      "Tu tarea es encontrar publicaciones rivales reales en Mercado Libre Uruguay.",
+      "No inventes URLs, precios, vendedores ni IDs. Si no hay evidencia suficiente, devolve menos candidatos.",
+      strictJson
+        ? "Respondé usando el formato JSON solicitado."
+        : "Respondé SOLO con un objeto JSON valido, sin markdown ni texto adicional.",
+    ].join(" "),
+    input: buildPrompt(payload, limit),
+    text: strictJson
+      ? {
+        format: {
+          type: "json_schema",
+          name: "ml_rival_search",
+          strict: true,
+          schema: resultSchema,
+        },
+      }
+      : { format: { type: "text" } },
+    max_output_tokens: strictJson ? 1800 : 2200,
+  };
+
+  if (supportsReasoning(OPENAI_MODEL)) {
+    requestBody.reasoning = { effort: "low" };
+  }
+
+  return requestBody;
+}
+
+async function requestOpenAI(requestBody: Record<string, unknown>) {
+  const openaiRes = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${OPENAI_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  const raw = await openaiRes.json() as Record<string, unknown>;
+  if (!openaiRes.ok) {
+    console.error("OpenAI error", raw);
+    const message =
+      typeof raw.error === "object" && raw.error !== null &&
+        typeof (raw.error as { message?: unknown }).message === "string"
+        ? (raw.error as { message: string }).message
+        : "No se pudo buscar rivales con OpenAI";
+    throw new OpenAIRequestError(message);
+  }
+
+  return raw;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -293,77 +396,46 @@ Deno.serve(async (req) => {
     }
 
     const limit = clampLimit(payload.limit);
-    const requestBody: Record<string, unknown> = {
-      model: OPENAI_MODEL,
-      store: false,
-      include: ["web_search_call.action.sources"],
-      tools: [
-        {
-          type: "web_search",
-          filters: {
-            allowed_domains: ["mercadolibre.com.uy"],
-          },
-          user_location: {
-            type: "approximate",
-            country: "UY",
-            city: "Montevideo",
-            region: "Montevideo",
-            timezone: "America/Montevideo",
-          },
-          search_context_size: "medium",
-        },
-      ],
-      tool_choice: "auto",
-      instructions: [
-        "Sos un analista senior de e-commerce en Uruguay.",
-        "Tu tarea es encontrar publicaciones rivales reales en Mercado Libre Uruguay.",
-        "No inventes URLs, precios, vendedores ni IDs. Si no hay evidencia suficiente, devolve menos candidatos.",
-      ].join(" "),
-      input: buildPrompt({ ...payload, title }, limit),
-      text: {
-        format: {
-          type: "json_schema",
-          name: "ml_rival_search",
-          strict: true,
-          schema: resultSchema,
-        },
-      },
-      max_output_tokens: 3000,
-    };
+    const requestPayload = { ...payload, title };
+    let raw = await requestOpenAI(buildOpenAIRequest(requestPayload, limit, true));
+    let outputText = extractOutputText(raw);
+    let parsed: RivalSearchResult | null = null;
 
-    if (supportsReasoning(OPENAI_MODEL)) {
-      requestBody.reasoning = { effort: "low" };
+    try {
+      if (outputText) parsed = parseRivalSearchResult(outputText);
+    } catch (err) {
+      console.warn("OpenAI strict JSON parse failed:", err instanceof Error ? err.message : err);
     }
 
-    const openaiRes = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
-    });
+    if (!parsed && RIVAL_SEARCH_RETRY_ON_PARSE_ERROR) {
+      console.warn("Retrying rival search without strict schema", summarizeOutput(raw));
+      raw = await requestOpenAI(buildOpenAIRequest(requestPayload, limit, false));
+      outputText = extractOutputText(raw);
+      if (!outputText) {
+        return jsonResponse({
+          error: "OpenAI no devolvio contenido parseable",
+          debug: summarizeOutput(raw),
+        }, 502);
+      }
 
-    const raw = await openaiRes.json() as Record<string, unknown>;
-    if (!openaiRes.ok) {
-      console.error("OpenAI error", raw);
-      const message =
-        typeof raw.error === "object" && raw.error !== null &&
-          typeof (raw.error as { message?: unknown }).message === "string"
-          ? (raw.error as { message: string }).message
-          : "No se pudo buscar rivales con OpenAI";
-      return jsonResponse({ error: message }, 502);
+      try {
+        parsed = parseRivalSearchResult(outputText);
+      } catch (err) {
+        return jsonResponse({
+          error: "OpenAI devolvio contenido, pero no era JSON valido",
+          detail: err instanceof Error ? err.message : String(err),
+          debug: summarizeOutput(raw),
+        }, 502);
+      }
     }
 
-    const outputText = extractOutputText(raw);
-    if (!outputText) {
+    if (!parsed) {
       return jsonResponse({
-        error: "OpenAI no devolvio contenido parseable",
+        error: "OpenAI no devolvio JSON valido en el intento economico",
         debug: summarizeOutput(raw),
       }, 502);
     }
 
-    const parsed = JSON.parse(outputText) as RivalSearchResult;
     const existing = new Set((payload.existingCompetitorIds ?? []).map((id) => id.toUpperCase()));
     const candidates = (parsed.candidates ?? [])
       .map(normalizeCandidate)
@@ -386,6 +458,9 @@ Deno.serve(async (req) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("ml-search-rivals error:", message);
+    if (err instanceof OpenAIRequestError) {
+      return jsonResponse({ success: false, error: message }, 502);
+    }
     return jsonResponse({ success: false, error: message }, 500);
   }
 });

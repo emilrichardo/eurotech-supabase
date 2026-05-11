@@ -446,7 +446,7 @@ export default function ProductsTable({
       const res = await fetch('/api/rival-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productId: product.id, limit: 8 }),
+        body: JSON.stringify({ productId: product.id, limit: 5 }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'No se pudieron buscar rivales')
@@ -1110,12 +1110,21 @@ export default function ProductsTable({
                       <button
                         onClick={() => handleSearchRivals(selected)}
                         disabled={rivalSearchLoading}
-                        className="flex items-center gap-1.5 text-xs font-medium bg-gray-900 text-white px-3 py-1.5 rounded-lg hover:bg-gray-800 disabled:opacity-50 transition-colors"
+                        className="flex items-center gap-2 text-xs font-medium bg-gray-900 text-white px-3 py-1.5 rounded-lg hover:bg-gray-800 disabled:opacity-70 transition-colors"
                       >
-                        <svg className={`w-3.5 h-3.5 ${rivalSearchLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35m1.6-5.15a6.75 6.75 0 11-13.5 0 6.75 6.75 0 0113.5 0z" />
-                        </svg>
-                        {rivalSearchLoading ? 'Buscando...' : 'Buscar rivales'}
+                        <span className="relative flex h-4 w-4 items-center justify-center">
+                          {rivalSearchLoading && (
+                            <>
+                              <span className="absolute h-4 w-4 rounded-full border border-white/50 animate-ping" />
+                              <span className="absolute h-2 w-2 rounded-full bg-white/30 animate-pulse" />
+                            </>
+                          )}
+                          <svg className="relative z-10 w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 4l1.8 4.2L17 10l-4.2 1.8L11 16l-1.8-4.2L5 10l4.2-1.8L11 4z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9L18 14z" />
+                          </svg>
+                        </span>
+                        {rivalSearchLoading ? 'Buscando con IA...' : 'Buscar rivales con IA'}
                       </button>
                       <button
                         onClick={() => setShowAddModal(true)}
