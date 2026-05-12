@@ -117,7 +117,7 @@ function RuleForm({
             className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-400"
           />
           <label htmlFor="compare-catalog" className="text-xs text-gray-600 select-none cursor-pointer">
-            Comparar contra precio catálogo <span className="text-gray-400">(si no, usa precio de publicación)</span>
+            Comparar contra precio catálogo <span className="text-gray-400">(la oferta activa siempre tiene prioridad)</span>
           </label>
         </div>
       </div>

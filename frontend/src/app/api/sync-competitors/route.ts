@@ -24,6 +24,7 @@ type Rule = {
   rule_type: string
   sku: string | null
   threshold_pct: number | null
+  compare_catalog_price: boolean
 }
 
 type AlertInsert = {
@@ -31,9 +32,22 @@ type AlertInsert = {
   our_sku: string
   competitor_item_id: string
   our_price: number | null
+  catalog_price: number | null
   competitor_price_before: number | null
   competitor_price_after: number | null
   diff_pct: number | null
+}
+
+type OwnProductPrices = {
+  listPrice: number | null
+  salePrice: number | null
+  catalogPrice: number | null
+}
+
+function resolveReferencePrice(rule: Rule, prices: OwnProductPrices): number | null {
+  if (prices.salePrice != null) return prices.salePrice
+  if (rule.compare_catalog_price && prices.catalogPrice != null) return prices.catalogPrice
+  return prices.listPrice
 }
 
 function evaluateRules(
@@ -41,21 +55,22 @@ function evaluateRules(
   item: { id: string; our_sku: string; price: number | null },
   priceBefore: number | null,
   priceAfter: number | null,
-  ourPrice: number | null,
+  ownPrices: OwnProductPrices,
 ): AlertInsert[] {
   if (priceAfter == null) return []
 
   const priceChanged = priceBefore !== priceAfter
-
-  const diffPct = ourPrice != null && ourPrice > 0
-    ? ((ourPrice - priceAfter) / ourPrice) * 100
-    : null
 
   const alerts: AlertInsert[] = []
 
   for (const rule of rules) {
     // Skip rules scoped to a different SKU
     if (rule.sku && rule.sku !== item.our_sku) continue
+
+    const refPrice = resolveReferencePrice(rule, ownPrices)
+    const diffPct = refPrice != null && refPrice > 0
+      ? ((refPrice - priceAfter) / refPrice) * 100
+      : null
 
     let fires = false
     switch (rule.rule_type) {
@@ -65,19 +80,19 @@ function evaluateRules(
         break
       case 'competitor_cheaper':
         // Fire whenever competitor is cheaper, regardless of price change
-        fires = ourPrice != null && priceAfter < ourPrice
+        fires = refPrice != null && priceAfter < refPrice
         break
       case 'competitor_pricier':
         // Fire whenever competitor is more expensive, regardless of price change
-        fires = ourPrice != null && priceAfter > ourPrice
+        fires = refPrice != null && priceAfter > refPrice
         break
       case 'price_diff_pct_above':
-        // competitor cheaper than us by more than threshold%
-        fires = diffPct != null && rule.threshold_pct != null && diffPct > rule.threshold_pct
+        // competitor cheaper than us by at least threshold%
+        fires = diffPct != null && rule.threshold_pct != null && diffPct >= rule.threshold_pct
         break
       case 'price_diff_pct_below':
-        // competitor more expensive than us by more than threshold%
-        fires = diffPct != null && rule.threshold_pct != null && diffPct < -rule.threshold_pct
+        // competitor more expensive than us by at least threshold%
+        fires = diffPct != null && rule.threshold_pct != null && diffPct <= -rule.threshold_pct
         break
     }
 
@@ -86,7 +101,8 @@ function evaluateRules(
         rule_id: rule.id,
         our_sku: item.our_sku,
         competitor_item_id: item.id,
-        our_price: ourPrice,
+        our_price: refPrice,
+        catalog_price: ownPrices.catalogPrice,
         competitor_price_before: priceBefore,
         competitor_price_after: priceAfter,
         diff_pct: diffPct,
@@ -128,16 +144,20 @@ export async function POST() {
 
   // Load enabled alert rules and our product prices (for diff calculation)
   const [rulesRes, productsRes] = await Promise.all([
-    admin.schema('ml').from('ml_price_alert_rules').select('id, rule_type, sku, threshold_pct').eq('enabled', true),
-    admin.schema('ml').from('ml_products').select('sku, price').not('sku', 'is', null),
+    admin.schema('ml').from('ml_price_alert_rules').select('id, rule_type, sku, threshold_pct, compare_catalog_price').eq('enabled', true),
+    admin.schema('ml').from('ml_products').select('sku, price, sale_price, catalog_price').not('sku', 'is', null),
   ])
 
   const rules: Rule[] = rulesRes.data ?? []
-  // Use first non-null price per SKU (multiple rows can share same SKU)
-  const ourPriceMap: Record<string, number> = {}
+  // Use first row per SKU (multiple rows can share same SKU)
+  const ourPriceMap: Record<string, OwnProductPrices> = {}
   for (const p of productsRes.data ?? []) {
-    if (p.sku && p.price != null && !(p.sku in ourPriceMap)) {
-      ourPriceMap[p.sku] = p.price
+    if (p.sku && !(p.sku in ourPriceMap)) {
+      ourPriceMap[p.sku] = {
+        listPrice: p.price ?? null,
+        salePrice: p.sale_price ?? null,
+        catalogPrice: p.catalog_price ?? null,
+      }
     }
   }
   console.log(`[sync-competitors] rules=${rules.length} skus_with_price=${Object.keys(ourPriceMap).length}`)
@@ -244,7 +264,13 @@ export async function POST() {
 
         if (!updateData) { failed++; return }
 
-        console.log(`[sync-competitors] item=${item.id} sku=${item.our_sku} prevPrice=${item.price} newPrice=${newPrice} ourPrice=${ourPriceMap[item.our_sku] ?? 'NOT_FOUND'}`)
+        const ownPrices = ourPriceMap[item.our_sku] ?? {
+          listPrice: null,
+          salePrice: null,
+          catalogPrice: null,
+        }
+        const loggedOurPrice = ownPrices.salePrice ?? ownPrices.catalogPrice ?? ownPrices.listPrice ?? 'NOT_FOUND'
+        console.log(`[sync-competitors] item=${item.id} sku=${item.our_sku} prevPrice=${item.price} newPrice=${newPrice} ourPrice=${loggedOurPrice}`)
 
         const { error: updateError } = await admin
           .schema('ml').from('ml_competitor_items')
@@ -262,7 +288,7 @@ export async function POST() {
             item,
             item.price ?? null,
             newPrice,
-            ourPriceMap[item.our_sku] ?? null,
+            ownPrices,
           )
           alertsToInsert.push(...fired)
         }

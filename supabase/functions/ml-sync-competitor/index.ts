@@ -166,6 +166,12 @@ interface AlertRule {
   compare_catalog_price: boolean;
 }
 
+interface OwnProductPrices {
+  listPrice: number | null;
+  salePrice: number | null;
+  catalogPrice: number | null;
+}
+
 // ─── Exchange Rate ────────────────────────────────────────────────────────────
 
 async function fetchUsdToUyu(): Promise<number | null> {
@@ -217,13 +223,11 @@ function evaluateRule(
   rule: AlertRule,
   priceBefore: number | null,
   priceAfter: number | null,
-  ourPrice: number | null,
-  catalogPrice: number | null,
+  ownPrices: OwnProductPrices,
 ): boolean {
   if (priceAfter === null) return false;
 
-  // Use catalog price as reference when rule is configured to do so (and catalog price is available)
-  const refPrice = (rule.compare_catalog_price && catalogPrice !== null) ? catalogPrice : ourPrice;
+  const refPrice = resolveReferencePrice(rule, ownPrices);
 
   switch (rule.rule_type) {
     case "price_changed":
@@ -262,6 +266,12 @@ function calcDiffPct(ourPrice: number | null, competitorPrice: number | null): n
   return Number((((ourPrice - competitorPrice) / ourPrice) * 100).toFixed(2));
 }
 
+function resolveReferencePrice(rule: AlertRule, prices: OwnProductPrices): number | null {
+  if (prices.salePrice !== null) return prices.salePrice;
+  if (rule.compare_catalog_price && prices.catalogPrice !== null) return prices.catalogPrice;
+  return prices.listPrice;
+}
+
 // ─── Core ────────────────────────────────────────────────────────────────────
 
 async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
@@ -293,19 +303,19 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
   const skus = [...new Set((competitorItems as CompetitorItem[]).map((c) => c.our_sku))];
   const { data: ownProducts, error: prodError } = await supabase
     .schema("ml").from("ml_products")
-    .select("sku, price, catalog_price")
+    .select("sku, price, sale_price, catalog_price")
     .in("sku", skus);
 
   if (prodError) throw new Error(`Error cargando precios propios: ${prodError.message}`);
 
-  const ownPriceMap = new Map<string, number>();
-  const catalogPriceMap = new Map<string, number>();
+  const ownPriceMap = new Map<string, OwnProductPrices>();
   for (const p of ownProducts ?? []) {
-    if (p.sku && p.price !== null && !ownPriceMap.has(p.sku)) {
-      ownPriceMap.set(p.sku, p.price);
-    }
-    if (p.sku && p.catalog_price !== null && !catalogPriceMap.has(p.sku)) {
-      catalogPriceMap.set(p.sku, p.catalog_price);
+    if (p.sku && !ownPriceMap.has(p.sku)) {
+      ownPriceMap.set(p.sku, {
+        listPrice: p.price ?? null,
+        salePrice: p.sale_price ?? null,
+        catalogPrice: p.catalog_price ?? null,
+      });
     }
   }
 
@@ -343,8 +353,11 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
     }[];
   } {
     const prevPrice = item.price ?? null;
-    const ourPrice = ownPriceMap.get(item.our_sku) ?? null;
-    const catalogPrice = catalogPriceMap.get(item.our_sku) ?? null;
+    const ownPrices = ownPriceMap.get(item.our_sku) ?? {
+      listPrice: null,
+      salePrice: null,
+      catalogPrice: null,
+    };
 
     const update: Record<string, unknown> = {
       id: item.id,
@@ -360,15 +373,15 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
       (r) => r.sku === null || r.sku === item.our_sku
     );
     const alerts = applicableRules
-      .filter((rule) => evaluateRule(rule, prevPrice, newPrice, ourPrice, catalogPrice))
+      .filter((rule) => evaluateRule(rule, prevPrice, newPrice, ownPrices))
       .map((rule) => {
-        const refPrice = (rule.compare_catalog_price && catalogPrice !== null) ? catalogPrice : ourPrice;
+        const refPrice = resolveReferencePrice(rule, ownPrices);
         return {
           rule_id: rule.id,
           our_sku: item.our_sku,
           competitor_item_id: item.id,
           our_price: refPrice,
-          catalog_price: catalogPrice,
+          catalog_price: ownPrices.catalogPrice,
           competitor_price_before: prevPrice,
           competitor_price_after: newPrice,
           diff_pct: calcDiffPct(refPrice, newPrice),
@@ -469,8 +482,11 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
       }
 
       const prevPrice = local.price ?? null;
-      const ourPrice = ownPriceMap.get(local.our_sku) ?? null;
-      const catalogPrice = catalogPriceMap.get(local.our_sku) ?? null;
+      const ownPrices = ownPriceMap.get(local.our_sku) ?? {
+        listPrice: null,
+        salePrice: null,
+        catalogPrice: null,
+      };
 
       updateRows.push({
         id: result.id,
@@ -491,14 +507,14 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
       );
 
       for (const rule of applicableRules) {
-        if (evaluateRule(rule, prevPrice, newPrice, ourPrice, catalogPrice)) {
-          const refPrice = (rule.compare_catalog_price && catalogPrice !== null) ? catalogPrice : ourPrice;
+        if (evaluateRule(rule, prevPrice, newPrice, ownPrices)) {
+          const refPrice = resolveReferencePrice(rule, ownPrices);
           alertRows.push({
             rule_id: rule.id,
             our_sku: local.our_sku,
             competitor_item_id: result.id,
             our_price: refPrice,
-            catalog_price: catalogPrice,
+            catalog_price: ownPrices.catalogPrice,
             competitor_price_before: prevPrice,
             competitor_price_after: newPrice,
             diff_pct: calcDiffPct(refPrice, newPrice),
