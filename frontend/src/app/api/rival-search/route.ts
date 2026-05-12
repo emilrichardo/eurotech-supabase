@@ -48,8 +48,105 @@ type MlResolvedProduct = {
   seller_name: string | null
 }
 
+const MIN_RIVAL_CONFIDENCE = 0.76
+const GENERIC_MATCH_TOKENS = new Set([
+  'a',
+  'al',
+  'con',
+  'de',
+  'del',
+  'el',
+  'en',
+  'eurotech',
+  'juego',
+  'kit',
+  'la',
+  'las',
+  'libre',
+  'los',
+  'mercado',
+  'ml',
+  'mlu',
+  'nuevo',
+  'nueva',
+  'o',
+  'pack',
+  'para',
+  'por',
+  'set',
+  'sin',
+  'un',
+  'una',
+  'uno',
+  'uruguay',
+  'x',
+  'y',
+])
+
 function compactText(value: string) {
   return value.replace(/\s+/g, ' ').trim()
+}
+
+function normalizeSearchText(value: string) {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[|()[\]{}.,;:_+]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function uniqueValues(values: string[]) {
+  return [...new Set(values)]
+}
+
+function extractMeaningfulTokens(value: string) {
+  const tokens = normalizeSearchText(value).match(/[a-z0-9]+(?:\/[0-9]+)?/g) ?? []
+  return uniqueValues(tokens.filter((token) => {
+    if (token.length <= 1) return false
+    if (GENERIC_MATCH_TOKENS.has(token)) return false
+    return true
+  }))
+}
+
+function extractSpecs(value: string) {
+  const specs = normalizeSearchText(value).match(/\bm?\d+(?:[.,]\d+)?(?:\/\d+)?\b/g) ?? []
+  return uniqueValues(specs.map((spec) => spec.replace(',', '.')))
+}
+
+function getSharedValues(left: string[], right: string[]) {
+  const rightSet = new Set(right)
+  return left.filter((value) => rightSet.has(value))
+}
+
+function isExactCompetitorCandidate(productTitle: string, productDescription: string, candidate: RivalCandidate) {
+  if (candidate.confidence < MIN_RIVAL_CONFIDENCE) return false
+
+  const productText = `${productTitle} ${productDescription}`
+  const candidateText = [
+    candidate.title,
+    candidate.reason,
+    candidate.matched_terms.join(' '),
+  ].join(' ')
+
+  const productTokens = extractMeaningfulTokens(productText)
+  const candidateTokens = extractMeaningfulTokens(candidateText)
+  const sharedTokens = getSharedValues(productTokens, candidateTokens)
+  const titleTokens = extractMeaningfulTokens(productTitle)
+  const titleSharedTokens = getSharedValues(titleTokens, candidateTokens)
+  const productSpecs = extractSpecs(productTitle)
+  const candidateSpecs = extractSpecs(candidateText)
+  const sharedSpecs = getSharedValues(productSpecs, candidateSpecs)
+  const overlapBase = Math.max(1, Math.min(titleTokens.length, 7))
+  const titleOverlapRatio = titleSharedTokens.length / overlapBase
+
+  if (titleSharedTokens.length >= 3) return true
+  if (titleSharedTokens.length >= 2 && titleOverlapRatio >= 0.28) return true
+  if (titleSharedTokens.length >= 1 && sharedSpecs.length >= 2) return true
+  if (sharedTokens.length >= 2 && sharedSpecs.length >= 1) return true
+
+  return false
 }
 
 function attributesToText(attributes: Attribute[] | null) {
@@ -292,6 +389,7 @@ export async function POST(req: NextRequest) {
   if (!product) return NextResponse.json({ error: 'Producto no encontrado' }, { status: 404 })
   if (!product.title) return NextResponse.json({ error: 'El producto no tiene titulo' }, { status: 400 })
 
+  const productTitle = product.title
   const skuKey = product.sku ?? product.id
 
   const [tokenResult, competitorsResult] = await Promise.all([
@@ -351,14 +449,17 @@ export async function POST(req: NextRequest) {
   }
 
   if (body && typeof body === 'object' && 'candidates' in body && Array.isArray((body as { candidates: unknown }).candidates)) {
-    const enrichedCandidates = await enrichCandidates(
+    const enrichedCandidates = (await enrichCandidates(
       (body as { candidates: RivalCandidate[] }).candidates,
       tokenResult.data?.access_token,
       typeof tokenResult.data?.user_id === 'number' ? tokenResult.data.user_id : null,
-    )
+    )).filter((candidate) => isExactCompetitorCandidate(productTitle, localDescription, candidate))
     return NextResponse.json({
       ...body,
       candidates: enrichedCandidates,
+      summary: enrichedCandidates.length > 0
+        ? (body as { summary?: unknown }).summary
+        : 'No se encontraron competidores exactos con suficiente confianza.',
       cost_estimate_usd: '~0.01-0.03',
     })
   }

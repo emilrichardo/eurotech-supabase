@@ -46,6 +46,41 @@ type RivalSearchResult = {
 
 class OpenAIRequestError extends Error {}
 
+const MIN_RIVAL_CONFIDENCE = 0.76;
+const GENERIC_MATCH_TOKENS = new Set([
+  "a",
+  "al",
+  "con",
+  "de",
+  "del",
+  "el",
+  "en",
+  "eurotech",
+  "juego",
+  "kit",
+  "la",
+  "las",
+  "libre",
+  "los",
+  "mercado",
+  "ml",
+  "mlu",
+  "nuevo",
+  "nueva",
+  "o",
+  "pack",
+  "para",
+  "por",
+  "set",
+  "sin",
+  "un",
+  "una",
+  "uno",
+  "uruguay",
+  "x",
+  "y",
+]);
+
 const resultSchema = {
   type: "object",
   additionalProperties: false,
@@ -149,6 +184,72 @@ function normalizeUrl(value: string): string {
   return trimmed;
 }
 
+function normalizeSearchText(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[|()[\]{}.,;:_+]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function uniqueValues(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function extractMeaningfulTokens(value: string): string[] {
+  const tokens = normalizeSearchText(value).match(/[a-z0-9]+(?:\/[0-9]+)?/g) ?? [];
+  return uniqueValues(tokens.filter((token) => {
+    if (token.length <= 1) return false;
+    if (GENERIC_MATCH_TOKENS.has(token)) return false;
+    return true;
+  }));
+}
+
+function extractSpecs(value: string): string[] {
+  const normalized = normalizeSearchText(value);
+  const specs = normalized.match(/\bm?\d+(?:[.,]\d+)?(?:\/\d+)?\b/g) ?? [];
+  return uniqueValues(specs.map((spec) => spec.replace(",", ".")));
+}
+
+function getSharedValues(left: string[], right: string[]): string[] {
+  const rightSet = new Set(right);
+  return left.filter((value) => rightSet.has(value));
+}
+
+function isExactCompetitorCandidate(
+  product: Required<Pick<SearchPayload, "title">> & SearchPayload,
+  candidate: RivalCandidate,
+): boolean {
+  if (candidate.confidence < MIN_RIVAL_CONFIDENCE) return false;
+
+  const productText = [product.title, product.description ?? ""].join(" ");
+  const candidateText = [
+    candidate.title,
+    candidate.reason,
+    candidate.matched_terms.join(" "),
+  ].join(" ");
+
+  const productTokens = extractMeaningfulTokens(productText);
+  const candidateTokens = extractMeaningfulTokens(candidateText);
+  const sharedTokens = getSharedValues(productTokens, candidateTokens);
+  const productSpecs = extractSpecs(product.title);
+  const candidateSpecs = extractSpecs(candidateText);
+  const sharedSpecs = getSharedValues(productSpecs, candidateSpecs);
+  const titleTokens = extractMeaningfulTokens(product.title);
+  const titleSharedTokens = getSharedValues(titleTokens, candidateTokens);
+  const overlapBase = Math.max(1, Math.min(titleTokens.length, 7));
+  const titleOverlapRatio = titleSharedTokens.length / overlapBase;
+
+  if (titleSharedTokens.length >= 3) return true;
+  if (titleSharedTokens.length >= 2 && titleOverlapRatio >= 0.28) return true;
+  if (titleSharedTokens.length >= 1 && sharedSpecs.length >= 2) return true;
+  if (sharedTokens.length >= 2 && sharedSpecs.length >= 1) return true;
+
+  return false;
+}
+
 function normalizeCandidate(candidate: RivalCandidate): RivalCandidate | null {
   const url = normalizeUrl(candidate.url);
   const itemId = candidate.item_id ?? extractMlId(url) ?? extractMlId(candidate.title);
@@ -219,57 +320,6 @@ function extractSources(data: Record<string, unknown>): string[] {
   }
 
   return [...urls];
-}
-
-function looksLikeProductUrl(url: string): boolean {
-  return /mercadolibre\.com\.uy\/(?:p|up)\//i.test(url) ||
-    /mercadolibre\.com\.uy\/.*MLU-?\d+/i.test(url) ||
-    /[?&#]wid=MLU\d+/i.test(url);
-}
-
-function titleFromUrl(url: string, itemId: string | null): string {
-  try {
-    const parsed = new URL(url);
-    const slug = parsed.pathname
-      .split("/")
-      .filter(Boolean)
-      .find((part) => !/^ML[A-Z]+-?\d+$/i.test(part) && part !== "p" && part !== "up");
-    if (slug) {
-      return slug
-        .replace(/-/g, " ")
-        .replace(/\b\w/g, (char) => char.toUpperCase())
-        .trim();
-    }
-  } catch {
-    // keep fallback below
-  }
-
-  return itemId ? `Producto rival ${itemId}` : "Producto rival encontrado";
-}
-
-function candidatesFromSources(sources: string[], limit: number): RivalCandidate[] {
-  return sources
-    .map(normalizeUrl)
-    .filter((url) => url.includes("mercadolibre.com.uy") && looksLikeProductUrl(url))
-    .map((url) => {
-      const itemId = extractMlId(url);
-      return {
-        title: titleFromUrl(url, itemId),
-        url,
-        item_id: itemId,
-        seller_name: null,
-        price: null,
-        currency_id: null,
-        thumbnail: null,
-        confidence: 0.45,
-        reason: "Fuente encontrada en Mercado Libre; revisar similitud antes de agregar.",
-        matched_terms: [],
-      };
-    })
-    .filter((candidate, index, arr) =>
-      arr.findIndex((other) => (other.item_id ?? other.url) === (candidate.item_id ?? candidate.url)) === index
-    )
-    .slice(0, limit);
 }
 
 function summarizeOutput(data: Record<string, unknown>) {
@@ -355,15 +405,17 @@ function buildPrompt(payload: Required<Pick<SearchPayload, "title">> & SearchPay
     `- Dominio ML: ${payload.domainId ?? "desconocido"}`,
     `- Precio actual: ${payload.price ?? "desconocido"} ${payload.currencyId ?? ""}`.trim(),
     "",
-    "Para buscar, NO uses el SKU ni la marca propia como restriccion principal. Ignora la marca Eurotech si aparece y buscá por tipo de producto, medidas, encastre, modelo y sinonimos.",
-    "Probá estas consultas base y variantes equivalentes en Mercado Libre Uruguay antes de concluir que no hay rivales:",
+    "Para buscar, NO uses el SKU ni la marca propia como restriccion principal. Ignora la marca Eurotech si aparece, pero conserva tipo exacto de producto, medidas, encastre, modelo, material y cantidad cuando sean parte de la equivalencia.",
+    "Probá estas consultas base y variantes equivalentes en Mercado Libre Uruguay, manteniendo siempre el mismo producto objetivo:",
     searchHints || `- ${payload.title}`,
     "",
-    `Devolvé hasta ${limit} rivales reales. Priorizá publicaciones activas, mismo tipo de producto, marca/modelo compatible, dimensiones o especificaciones similares y vendedores distintos.`,
-    "Incluí candidatos con confianza media si compiten por uso aunque no tengan exactamente la misma marca. No incluyas accesorios sueltos, repuestos, publicaciones pausadas, productos usados si el nuestro es nuevo salvo que sea claramente comparable, ni resultados del mismo producto propio.",
+    `Devolvé hasta ${limit} rivales reales, solo si son sustitutos directos que un comprador podria elegir en lugar del producto propio.`,
+    "Incluí un candidato unicamente cuando sea el mismo tipo exacto de producto o una variante equivalente con mismas medidas/modelo/encastre/cantidad principales. No alcanza con que comparta uso, categoria, instalacion o una palabra generica.",
+    "No incluyas productos de otra familia, accesorios sueltos, repuestos distintos, combos no equivalentes, publicaciones pausadas, productos usados si el nuestro es nuevo salvo que sea claramente comparable, ni resultados del mismo producto propio.",
+    "Si no encontrás coincidencias exactas con evidencia suficiente, devolvé candidates: [] en vez de candidatos dudosos.",
     `No repitas competidores ya vinculados. IDs existentes: ${existingIds}. URLs existentes:\n${existingUrls}`,
     "Usá solamente URLs de mercadolibre.com.uy y preferí URLs de catálogo /p/ o /up/ cuando estén disponibles.",
-    "El campo confidence debe ir de 0 a 1. El campo reason debe explicar brevemente por qué compite.",
+    "El campo confidence debe ir de 0 a 1. Usá valores menores a 0.76 para dudas y no incluyas esos candidatos. El campo reason debe citar las coincidencias exactas que lo hacen competidor.",
     "Respondé solo con un objeto JSON valido. No uses markdown, explicaciones, ni texto fuera del JSON.",
   ].join("\n");
 }
@@ -416,8 +468,9 @@ function buildOpenAIRequest(
     tool_choice: RIVAL_SEARCH_TOOL_CHOICE,
     instructions: [
       "Sos un analista senior de e-commerce en Uruguay.",
-      "Tu tarea es encontrar publicaciones rivales reales en Mercado Libre Uruguay.",
+      "Tu tarea es encontrar publicaciones rivales reales y exactas en Mercado Libre Uruguay.",
       "No inventes URLs, precios, vendedores ni IDs. Si no hay evidencia suficiente, devolve menos candidatos.",
+      "Preferí devolver cero resultados antes que devolver productos relacionados pero no sustituibles.",
       strictJson
         ? "Respondé usando el formato JSON solicitado."
         : "Respondé SOLO con un objeto JSON valido, sin markdown ni texto adicional.",
@@ -527,23 +580,16 @@ Deno.serve(async (req) => {
 
     if (!parsed) {
       const sources = extractSources(raw);
-      const sourceCandidates = candidatesFromSources(sources, limit);
-      if (sourceCandidates.length > 0) {
-        return jsonResponse({
-          success: true,
-          model: OPENAI_MODEL,
-          query: title,
-          summary: "OpenAI no devolvio JSON valido, pero se encontraron fuentes de Mercado Libre para revisar.",
-          candidates: sourceCandidates,
-          sources,
-          searched_at: new Date().toISOString(),
-        });
-      }
-
       return jsonResponse({
-        error: "OpenAI no devolvio JSON valido en el intento economico",
+        success: true,
+        model: OPENAI_MODEL,
+        query: title,
+        summary: "No se pudo validar una respuesta exacta de IA. No se muestran candidatos dudosos.",
+        candidates: [],
+        sources,
         debug: summarizeOutput(raw),
-      }, 502);
+        searched_at: new Date().toISOString(),
+      });
     }
 
     const existing = new Set((payload.existingCompetitorIds ?? []).map((id) => id.toUpperCase()));
@@ -553,20 +599,18 @@ Deno.serve(async (req) => {
       .filter((candidate): candidate is RivalCandidate => {
         if (!candidate) return false;
         if (candidate.item_id && existing.has(candidate.item_id.toUpperCase())) return false;
-        return candidate.url.includes("mercadolibre.com.uy");
+        return candidate.url.includes("mercadolibre.com.uy") &&
+          isExactCompetitorCandidate(requestPayload, candidate);
       })
       .slice(0, limit);
-
-    if (candidates.length === 0) {
-      candidates = candidatesFromSources(sources, limit)
-        .filter((candidate) => !candidate.item_id || !existing.has(candidate.item_id.toUpperCase()));
-    }
 
     return jsonResponse({
       success: true,
       model: OPENAI_MODEL,
       query: parsed.query,
-      summary: parsed.summary,
+      summary: candidates.length > 0
+        ? parsed.summary
+        : "No se encontraron competidores exactos con suficiente confianza.",
       candidates,
       sources,
       searched_at: new Date().toISOString(),
