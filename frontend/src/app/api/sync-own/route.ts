@@ -13,8 +13,9 @@ export async function POST() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
         apikey: key,
+        'x-sync-secret': key,
+        ...(key.startsWith('eyJ') ? { Authorization: `Bearer ${key}` } : {}),
       },
       body: '{}',
     })

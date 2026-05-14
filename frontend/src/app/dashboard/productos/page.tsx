@@ -4,6 +4,8 @@ import SyncButton from './SyncButton'
 
 export const dynamic = 'force-dynamic'
 
+type ProductsTableProps = Parameters<typeof ProductsTable>[0]
+
 const PRODUCT_SELECT = `id, title, subtitle, sku, price, sale_price, catalog_price, buybox_price, buybox_seller_id, base_price, original_price, currency_id,
  available_quantity, sold_quantity, initial_quantity,
  status, condition, listing_type_id, buying_mode,
@@ -60,9 +62,9 @@ export default async function ProductosPage() {
   const supabase = createAdminClient()
 
   const [productsResult, competitorsResult, categoriesResult, lastProductSyncResult, lastCompetitorSyncResult] = await Promise.all([
-    // List query: exclude heavy JSONB fields (pictures, shipping, tags, attributes).
+    // List query: exclude heavy JSONB fields (pictures, shipping, descriptions, tags, attributes).
     // Those are only needed in the detail panel and are fetched on-demand via
-    // /api/product-panel/[sku] when a row is clicked.
+    // /api/product-media/[id] when a row is clicked.
     fetchAllProducts(supabase),
 
     fetchAllCompetitors(supabase),
@@ -148,11 +150,9 @@ export default async function ProductosPage() {
           No hay productos sincronizados aún.
         </div>
       ) : (
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         <ProductsTable
-          products={products as any}
-          count={count ?? 0}
-          competitorsBySku={competitorsBySku as any}
+          products={products as ProductsTableProps['products']}
+          competitorsBySku={competitorsBySku as ProductsTableProps['competitorsBySku']}
           categoryMap={categoryMap}
         />
       )}

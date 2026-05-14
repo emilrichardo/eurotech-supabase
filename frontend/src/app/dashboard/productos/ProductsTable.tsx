@@ -64,6 +64,7 @@ type Product = {
   tags: unknown[] | null
   attributes: unknown[] | null
   pictures: { secure_url?: string; url?: string }[] | null
+  descriptions?: unknown | null
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -123,6 +124,45 @@ function formatRelative(dateStr: string | null) {
 function isStale(dateStr: string | null) {
   if (!dateStr) return true
   return Date.now() - new Date(dateStr).getTime() > 7 * 24 * 3600 * 1000
+}
+
+function normalizeDescriptionText(value: string) {
+  return value
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function descriptionsToText(descriptions: unknown): string | null {
+  if (!descriptions) return null
+  if (typeof descriptions === 'string') {
+    const text = normalizeDescriptionText(descriptions)
+    return text || null
+  }
+
+  if (Array.isArray(descriptions)) {
+    const text = descriptions
+      .map(item => descriptionsToText(item))
+      .filter(Boolean)
+      .join('\n\n')
+    return text || null
+  }
+
+  if (typeof descriptions === 'object') {
+    const maybeText = descriptions as { plain_text?: unknown; text?: unknown; description?: unknown }
+    const value =
+      typeof maybeText.plain_text === 'string' ? maybeText.plain_text :
+      typeof maybeText.text === 'string' ? maybeText.text :
+      typeof maybeText.description === 'string' ? maybeText.description :
+      null
+    if (value) {
+      const text = normalizeDescriptionText(value)
+      return text || null
+    }
+  }
+
+  return null
 }
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
@@ -333,21 +373,20 @@ function IconGrid() {
 
 export default function ProductsTable({
   products,
-  count,
   competitorsBySku,
   categoryMap,
 }: {
   products: Product[]
-  count: number
   competitorsBySku: Record<string, Competitor[]>
   categoryMap: Record<string, string>
 }) {
   const PAGE_SIZE = 50
 
   const [selected, setSelected] = useState<Product | null>(null)
+  type ProductMedia = { pictures: Product['pictures']; shipping: Product['shipping']; descriptions: Product['descriptions'] }
   // Heavy JSONB fields fetched on-demand when the panel opens (kept out of the
   // list query for perf). Keyed by product id so we don't refetch on re-select.
-  const [mediaById, setMediaById] = useState<Record<string, { pictures: Product['pictures']; shipping: Product['shipping'] }>>({})
+  const [mediaById, setMediaById] = useState<Record<string, ProductMedia>>({})
 
   useEffect(() => {
     if (!selected || mediaById[selected.id]) return
@@ -355,16 +394,32 @@ export default function ProductsTable({
     fetch(`/api/product-media/${selected.id}`)
       .then(r => (r.ok ? r.json() : null))
       .then(data => {
-        if (cancelled || !data) return
-        setMediaById(prev => ({ ...prev, [selected.id]: { pictures: data.pictures ?? null, shipping: data.shipping ?? null } }))
+        if (cancelled) return
+        setMediaById(prev => ({
+          ...prev,
+          [selected.id]: {
+            pictures: data?.pictures ?? null,
+            shipping: data?.shipping ?? null,
+            descriptions: data?.descriptions ?? null,
+          },
+        }))
       })
-      .catch(() => {})
+      .catch(() => {
+        if (cancelled) return
+        setMediaById(prev => ({
+          ...prev,
+          [selected.id]: { pictures: null, shipping: null, descriptions: null },
+        }))
+      })
     return () => { cancelled = true }
   }, [selected, mediaById])
 
   const selectedMedia = selected ? mediaById[selected.id] : undefined
   const selectedPictures = selectedMedia?.pictures ?? selected?.pictures ?? null
   const selectedShipping = selectedMedia?.shipping ?? selected?.shipping ?? null
+  const selectedDescriptions = selectedMedia?.descriptions ?? selected?.descriptions ?? null
+  const selectedDescriptionText = descriptionsToText(selectedDescriptions)
+  const selectedDescriptionLoading = selected ? !selectedMedia : false
   const [view, setView] = useState<ViewMode>('grid')
   const [localCompetitors, setLocalCompetitors] = useState<Record<string, Competitor[]>>(competitorsBySku)
   const [showAddModal, setShowAddModal] = useState(false)
@@ -439,7 +494,21 @@ export default function ProductsTable({
         catalog_price: data.catalog_price ?? prev.catalog_price,
         buybox_price: data.buybox_price ?? prev.buybox_price,
         buybox_seller_id: data.buybox_seller_id ?? prev.buybox_seller_id,
+        descriptions: data.descriptions ?? prev.descriptions,
       } : prev)
+      if (data.descriptions !== undefined) {
+        setMediaById(prev => {
+          const current = prev[productId]
+          if (!current) return prev
+          return {
+            ...prev,
+            [productId]: {
+              ...current,
+              descriptions: data.descriptions ?? current.descriptions,
+            },
+          }
+        })
+      }
       setSyncProductMsg('Actualizado')
     } catch (e) {
       setSyncProductMsg(e instanceof Error ? e.message : 'Error')
@@ -1558,6 +1627,17 @@ export default function ProductsTable({
                 {/* ── Details tab ── */}
                 {panelTab === 'details' && (
                   <div className="p-4 space-y-2">
+                    <Accordion title="Descripción" defaultOpen>
+                      {selectedDescriptionText ? (
+                        <p className="pt-4 text-sm leading-6 text-gray-700 whitespace-pre-line break-words">
+                          {selectedDescriptionText}
+                        </p>
+                      ) : selectedDescriptionLoading ? (
+                        <p className="pt-4 text-sm text-gray-400">Cargando descripción...</p>
+                      ) : (
+                        <p className="pt-4 text-sm text-gray-400">Sin descripción sincronizada.</p>
+                      )}
+                    </Accordion>
                     <Accordion title="General" defaultOpen>
                       <InfoRow label="ID ML" value={selected.id} />
                       <InfoRow label="SKU" value={selected.sku} />

@@ -13,6 +13,19 @@ async function getMlToken(admin: ReturnType<typeof createAdminClient>) {
   return data
 }
 
+async function fetchMlDescription(id: string, headers: Record<string, string>) {
+  try {
+    const res = await fetch(`${ML_API}/items/${id}/description`, {
+      headers,
+      cache: 'no-store',
+    })
+    if (!res.ok) return null
+    return await res.json()
+  } catch {
+    return null
+  }
+}
+
 // POST /api/sync-product?id=MLU640834497
 export async function POST(req: NextRequest) {
   const id = req.nextUrl.searchParams.get('id')
@@ -31,6 +44,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `ML error ${itemRes.status}` }, { status: itemRes.status })
   }
   const item = await itemRes.json()
+  const description = await fetchMlDescription(id, headers)
 
   const updates: Record<string, unknown> = {
     price: item.price ?? null,
@@ -40,6 +54,7 @@ export async function POST(req: NextRequest) {
     sold_quantity: item.sold_quantity ?? null,
     status: item.status ?? null,
     health: item.health ?? null,
+    descriptions: description ?? item.descriptions ?? null,
     synced_at: new Date().toISOString(),
   }
 
@@ -80,5 +95,6 @@ export async function POST(req: NextRequest) {
     buybox_price: updates.buybox_price ?? null,
     buybox_seller_id: updates.buybox_seller_id ?? null,
     catalog_id: catalogId,
+    descriptions: updates.descriptions ?? null,
   })
 }

@@ -10,6 +10,40 @@ const ML_CLIENT_SECRET = Deno.env.get("ML_CLIENT_SECRET")!;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
+// ─── Request Auth ───────────────────────────────────────────────────────────
+
+function constantTimeEqual(a: string, b: string): boolean {
+  const encoder = new TextEncoder();
+  const left = encoder.encode(a);
+  const right = encoder.encode(b);
+  const length = Math.max(left.length, right.length);
+  let diff = left.length ^ right.length;
+
+  for (let i = 0; i < length; i++) {
+    diff |= (left[i] ?? 0) ^ (right[i] ?? 0);
+  }
+
+  return diff === 0;
+}
+
+function isAuthorized(req: Request): boolean {
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const bearer = authHeader.match(/^Bearer\s+(.+)$/i)?.[1] ?? null;
+  const apiKey = req.headers.get("apikey");
+  const syncSecret = req.headers.get("x-sync-secret");
+  const provided = [bearer, apiKey, syncSecret].filter((value): value is string => Boolean(value));
+  const allowed = [
+    Deno.env.get("SYNC_OWN_SECRET"),
+    Deno.env.get("SUPABASE_SECRET_KEY"),
+    Deno.env.get("SUPABASE_SECRET_KEYS"),
+    SUPABASE_SERVICE_KEY,
+  ].filter((value): value is string => Boolean(value));
+
+  return provided.some((candidate) =>
+    allowed.some((secret) => constantTimeEqual(candidate, secret))
+  );
+}
+
 // ─── Token Management ────────────────────────────────────────────────────────
 
 interface TokenRow {
@@ -232,6 +266,14 @@ interface MLVariation {
   attribute_combinations?: MLAttribute[];
 }
 
+interface MLDescription {
+  text?: string | null;
+  plain_text?: string | null;
+  date_created?: string | null;
+  last_updated?: string | null;
+  snapshot?: unknown;
+}
+
 function cleanSku(value: unknown): string | null {
   if (typeof value === "number") return String(value);
   if (typeof value !== "string") return null;
@@ -266,7 +308,7 @@ function extractSku(item: MLItem): string | null {
   return null;
 }
 
-function mapItemToRow(item: MLItem) {
+function mapItemToRow(item: MLItem, description: MLDescription | null = null) {
   return {
     id: item.id,
     sku: extractSku(item),
@@ -314,7 +356,7 @@ function mapItemToRow(item: MLItem) {
     attributes: item.attributes ?? null,
     variations: item.variations ?? null,
     sale_terms: item.sale_terms ?? null,
-    descriptions: item.descriptions ?? null,
+    descriptions: description ?? item.descriptions ?? null,
     warranty: item.warranty ?? null,
     seller_address: item.seller_address ?? null,
     location: item.location ?? null,
@@ -354,6 +396,22 @@ async function fetchItem(id: string, token: string): Promise<MLItem | null> {
   }
 }
 
+async function fetchItemDescription(id: string, token: string): Promise<MLDescription | null> {
+  try {
+    const res = await fetch(`${ML_API}/items/${id}/description`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      if (res.status !== 404) console.warn(`[items/${id}/description] ${res.status}`);
+      return null;
+    }
+    return await res.json() as MLDescription;
+  } catch (err) {
+    console.warn(`[items/${id}/description] fetch error:`, err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 // /items/{id}/prices exposes promotional / deal pricing that the items endpoint
 // omits for the seller's own items. We pick the lowest amount among entries
 // flagged as promotional (type contains "promotion" or regular_amount present).
@@ -373,6 +431,7 @@ interface MLPricesResponse {
 
 let debugPricesCallCount = 0;
 let debugPromosFoundCount = 0;
+let debugDescriptionsFoundCount = 0;
 
 async function fetchItemPrices(id: string, token: string): Promise<MLPricesResponse | null> {
   try {
@@ -416,19 +475,22 @@ async function fetchAndUpsertItems(
   let upserted = 0;
   const CONCURRENCY = 20;
 
-  // For each item we fetch /items/{id} and /items/{id}/prices in parallel.
+  // For each item we fetch /items/{id}, /items/{id}/description and
+  // /items/{id}/prices in parallel.
   // The prices endpoint surfaces real promotional prices that don't appear in
   // the items payload for the seller's own listings.
   for (const batch of chunk(ids, CONCURRENCY)) {
     const results = await Promise.all(
       batch.map(async (id) => {
-        const [item, pricesResp] = await Promise.all([
+        const [item, pricesResp, description] = await Promise.all([
           fetchItem(id, token),
           fetchItemPrices(id, token),
+          fetchItemDescription(id, token),
         ]);
         debugPricesCallCount++;
         if (!item) return null;
-        const row = mapItemToRow(item);
+        if (description?.plain_text || description?.text) debugDescriptionsFoundCount++;
+        const row = mapItemToRow(item, description);
         const promoPrice = extractPromoAmount(pricesResp);
         if (promoPrice !== null) {
           row.sale_price = promoPrice;
@@ -464,6 +526,10 @@ Deno.serve(async (req) => {
     return new Response("Method not allowed", { status: 405 });
   }
 
+  if (!isAuthorized(req)) {
+    return Response.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     console.log("=== ML Sync iniciado ===");
 
@@ -473,10 +539,11 @@ Deno.serve(async (req) => {
 
     debugPricesCallCount = 0;
     debugPromosFoundCount = 0;
+    debugDescriptionsFoundCount = 0;
     const upserted = await fetchAndUpsertItems(ids, tokenRow.access_token);
 
     console.log(
-      `[ml-sync diag] /prices calls=${debugPricesCallCount} promos_found=${debugPromosFoundCount}`
+      `[ml-sync diag] /prices calls=${debugPricesCallCount} promos_found=${debugPromosFoundCount} descriptions_found=${debugDescriptionsFoundCount}`
     );
 
     const result = {
@@ -485,6 +552,7 @@ Deno.serve(async (req) => {
       upserted,
       prices_calls: debugPricesCallCount,
       promos_found: debugPromosFoundCount,
+      descriptions_found: debugDescriptionsFoundCount,
       synced_at: new Date().toISOString(),
     };
 
