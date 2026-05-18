@@ -143,11 +143,14 @@ async function fetchFromItem(
 }
 
 export async function POST(req: NextRequest) {
-  const { itemIdOrUrl, ourSku } = await req.json()
+  const { itemIdOrUrl, ourSku, ourProductId } = await req.json()
 
   const { catalogId, itemId } = parseInput(itemIdOrUrl)
   if (!catalogId && !itemId) {
     return NextResponse.json({ error: 'URL o ID de producto inválido' }, { status: 400 })
+  }
+  if (!ourSku && !ourProductId) {
+    return NextResponse.json({ error: 'Falta el producto propio a vincular' }, { status: 400 })
   }
 
   const admin = createAdminClient()
@@ -206,18 +209,23 @@ export async function POST(req: NextRequest) {
   // Check for duplicate
   const { data: existing } = await admin
     .schema('ml').from('ml_competitor_items')
-    .select('id')
+    .select('id, our_sku, our_product_id')
     .eq('id', resolvedId)
-    .eq('our_sku', ourSku)
     .maybeSingle()
 
-  if (existing) {
+  const sameProductLink = existing && (
+    (ourProductId && existing.our_product_id === ourProductId) ||
+    (!ourProductId && ourSku && existing.our_sku === ourSku && !existing.our_product_id)
+  )
+
+  if (sameProductLink) {
     return NextResponse.json({ error: 'Este competidor ya está vinculado a este SKU' }, { status: 409 })
   }
 
   const record = {
     id: resolvedId,
-    our_sku: ourSku,
+    our_sku: ourSku ?? null,
+    our_product_id: ourProductId ?? null,
     title: (mlData.title as string) ?? null,
     price: (mlData.price as number) ?? null,
     original_price: (mlData.original_price as number) ?? null,
@@ -246,28 +254,38 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  const { itemId, ourSku, paused } = await req.json()
+  const { itemId, ourSku, ourProductId, paused } = await req.json()
   const admin = createAdminClient()
 
-  const { error } = await admin
+  let query = admin
     .schema('ml').from('ml_competitor_items')
     .update({ paused })
     .eq('id', itemId)
-    .eq('our_sku', ourSku)
+
+  query = ourProductId
+    ? query.eq('our_product_id', ourProductId)
+    : query.eq('our_sku', ourSku)
+
+  const { error } = await query
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
 }
 
 export async function DELETE(req: NextRequest) {
-  const { itemId, ourSku } = await req.json()
+  const { itemId, ourSku, ourProductId } = await req.json()
   const admin = createAdminClient()
 
-  const { error } = await admin
+  let query = admin
     .schema('ml').from('ml_competitor_items')
     .delete()
     .eq('id', itemId)
-    .eq('our_sku', ourSku)
+
+  query = ourProductId
+    ? query.eq('our_product_id', ourProductId)
+    : query.eq('our_sku', ourSku)
+
+  const { error } = await query
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })

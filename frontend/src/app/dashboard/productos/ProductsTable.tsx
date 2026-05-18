@@ -183,6 +183,7 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
 type Competitor = {
   id: string
   our_sku: string
+  our_product_id?: string | null
   title: string | null
   price: number | null
   currency_id: string | null
@@ -221,11 +222,13 @@ const RIVAL_SEARCH_STORAGE_KEY = 'ml-rival-search-results-v1'
 const RIVAL_SEARCH_COST_ESTIMATE = '~US$0.01-0.03'
 
 function AddCompetitorModal({
+  initialProductId,
   initialSku,
   availableSkus,
   onClose,
   onAdded,
 }: {
+  initialProductId: string
   initialSku: string
   availableSkus: string[]
   onClose: () => void
@@ -247,14 +250,15 @@ function AddCompetitorModal({
     }
 
     setLoading(true)
-    const res = await fetch('/api/competitors', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        itemIdOrUrl: competitorInput,
-        ourSku: selectedSku,
-      }),
-    })
+      const res = await fetch('/api/competitors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          itemIdOrUrl: competitorInput,
+          ourSku: linkMode === 'sku' ? selectedSku : initialSku,
+          ourProductId: linkMode === 'mlu' ? initialProductId : null,
+        }),
+      })
     const data = await res.json()
     setLoading(false)
     if (!res.ok) { setError(data.error); return }
@@ -306,7 +310,7 @@ function AddCompetitorModal({
 
             {linkMode === 'mlu' ? (
               <p className="text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2">
-                Se vincula al producto actual: <span className="font-mono font-medium text-gray-700">{initialSku}</span>
+                Se vincula a la publicación actual: <span className="font-mono font-medium text-gray-700">{initialProductId}</span>
               </p>
             ) : (
               <select
@@ -404,6 +408,18 @@ export default function ProductsTable({
 }) {
   const PAGE_SIZE = 50
 
+  function indexCompetitorsByOwner(source: Record<string, Competitor[]>) {
+    const indexed: Record<string, Competitor[]> = {}
+    for (const list of Object.values(source)) {
+      for (const competitor of list) {
+        const ownerKey = getCompetitorOwnerKey(competitor)
+        if (!indexed[ownerKey]) indexed[ownerKey] = []
+        indexed[ownerKey].push(competitor)
+      }
+    }
+    return indexed
+  }
+
   const [selected, setSelected] = useState<Product | null>(null)
   type ProductMedia = { pictures: Product['pictures']; shipping: Product['shipping']; descriptions: Product['descriptions'] }
   // Heavy JSONB fields fetched on-demand when the panel opens (kept out of the
@@ -443,7 +459,7 @@ export default function ProductsTable({
   const selectedDescriptionText = descriptionsToText(selectedDescriptions)
   const selectedDescriptionLoading = selected ? !selectedMedia : false
   const [view, setView] = useState<ViewMode>('grid')
-  const [localCompetitors, setLocalCompetitors] = useState<Record<string, Competitor[]>>(competitorsBySku)
+  const [localCompetitors, setLocalCompetitors] = useState<Record<string, Competitor[]>>(() => indexCompetitorsByOwner(competitorsBySku))
   const [showAddModal, setShowAddModal] = useState(false)
   const [search, setSearch] = useState('')
   const [competitorFilter, setCompetitorFilter] = useState<CompetitorFilter>('all')
@@ -462,6 +478,20 @@ export default function ProductsTable({
   const [rivalSearchLoadingId, setRivalSearchLoadingId] = useState<string | null>(null)
   const [rivalSearchError, setRivalSearchError] = useState<string | null>(null)
   const [addingSuggestionKey, setAddingSuggestionKey] = useState<string | null>(null)
+
+  function getCompetitorOwnerKey(input: { id: string; sku: string | null } | Competitor) {
+    if ('our_product_id' in input && input.our_product_id) return `product:${input.our_product_id}`
+    if ('our_sku' in input && input.our_sku) return `sku:${input.our_sku}`
+    if ('sku' in input && input.sku) return `sku:${input.sku}`
+    return `sku:${input.id}`
+  }
+
+  function getCompetitorsForProduct(product: Product) {
+    const productScoped = localCompetitors[`product:${product.id}`] ?? []
+    if (productScoped.length > 0) return productScoped
+    if (product.sku) return localCompetitors[`sku:${product.sku}`] ?? []
+    return []
+  }
 
   useEffect(() => {
     try {
@@ -549,32 +579,34 @@ export default function ProductsTable({
   function handleAdded(c: Competitor) {
     setLocalCompetitors(prev => ({
       ...prev,
-      [c.our_sku]: [...(prev[c.our_sku] ?? []), c],
+      [getCompetitorOwnerKey(c)]: [...(prev[getCompetitorOwnerKey(c)] ?? []), c],
     }))
   }
 
-  async function handleRemoveCompetitor(itemId: string, sku: string) {
+  async function handleRemoveCompetitor(itemId: string, sku: string, ourProductId?: string | null) {
     await fetch('/api/competitors', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ itemId, ourSku: sku }),
+      body: JSON.stringify({ itemId, ourSku: sku, ourProductId: ourProductId ?? null }),
     })
+    const ownerKey = ourProductId ? `product:${ourProductId}` : `sku:${sku}`
     setLocalCompetitors(prev => ({
       ...prev,
-      [sku]: (prev[sku] ?? []).filter(c => c.id !== itemId),
+      [ownerKey]: (prev[ownerKey] ?? []).filter(c => c.id !== itemId),
     }))
     setOpenGear(null)
   }
 
-  async function handlePauseCompetitor(itemId: string, sku: string, paused: boolean) {
+  async function handlePauseCompetitor(itemId: string, sku: string, paused: boolean, ourProductId?: string | null) {
     await fetch('/api/competitors', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ itemId, ourSku: sku, paused }),
+      body: JSON.stringify({ itemId, ourSku: sku, ourProductId: ourProductId ?? null, paused }),
     })
+    const ownerKey = ourProductId ? `product:${ourProductId}` : `sku:${sku}`
     setLocalCompetitors(prev => ({
       ...prev,
-      [sku]: (prev[sku] ?? []).map(c => c.id === itemId ? { ...c, paused } : c),
+      [ownerKey]: (prev[ownerKey] ?? []).map(c => c.id === itemId ? { ...c, paused } : c),
     }))
     setOpenGear(null)
   }
@@ -631,7 +663,7 @@ export default function ProductsTable({
       const res = await fetch('/api/competitors', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemIdOrUrl: input, ourSku: sku }),
+        body: JSON.stringify({ itemIdOrUrl: input, ourSku: sku, ourProductId: product.id }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'No se pudo agregar el rival')
@@ -717,7 +749,7 @@ export default function ProductsTable({
         !p.id.toLowerCase().includes(q)
       ) return false
     }
-    const competitorItems = p.sku ? (localCompetitors[p.sku]?.filter(c => showPaused || !c.paused) ?? []) : []
+    const competitorItems = getCompetitorsForProduct(p).filter(c => showPaused || !c.paused)
     const competitorCount = competitorItems.length
     if (competitorFilter === 'with' && competitorCount === 0) return false
     if (competitorFilter === 'without' && competitorCount > 0) return false
@@ -741,8 +773,8 @@ export default function ProductsTable({
     const aLosing = (a.buybox_price != null && (a.catalog_price == null || a.buybox_price < a.catalog_price)) ? 0 : 1
     const bLosing = (b.buybox_price != null && (b.catalog_price == null || b.buybox_price < b.catalog_price)) ? 0 : 1
     if (aLosing !== bLosing) return aLosing - bLosing
-    const aHas = (a.sku && (localCompetitors[a.sku]?.length ?? 0) > 0) ? 0 : 1
-    const bHas = (b.sku && (localCompetitors[b.sku]?.length ?? 0) > 0) ? 0 : 1
+    const aHas = getCompetitorsForProduct(a).length > 0 ? 0 : 1
+    const bHas = getCompetitorsForProduct(b).length > 0 ? 0 : 1
     if (aHas !== bHas) return aHas - bHas
     return 0
   })
@@ -946,7 +978,7 @@ export default function ProductsTable({
             </thead>
             <tbody className="divide-y divide-gray-50">
               {pagedProducts.map((p, index) => {
-                const compCount = p.sku ? (localCompetitors[p.sku]?.length ?? 0) : 0
+                const compCount = getCompetitorsForProduct(p).length
                 const relation = getRelatedGroup(p)
                 const previousRelation = index > 0 ? getRelatedGroup(pagedProducts[index - 1]) : null
                 const groupInfo = groupMetaByKey.get(relation.key)
@@ -1022,7 +1054,7 @@ export default function ProductsTable({
       {view === 'listado' && (
         <div className="space-y-2">
           {pagedProducts.map((p, index) => {
-            const compCount = p.sku ? (localCompetitors[p.sku]?.length ?? 0) : 0
+            const compCount = getCompetitorsForProduct(p).length
             const losingBuybox = p.buybox_price != null && (p.catalog_price == null || p.buybox_price < p.catalog_price)
             const relation = getRelatedGroup(p)
             const previousRelation = index > 0 ? getRelatedGroup(pagedProducts[index - 1]) : null
@@ -1090,7 +1122,7 @@ export default function ProductsTable({
       {view === 'grid' && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
           {pagedProducts.map((p, index) => {
-            const compCount = p.sku ? (localCompetitors[p.sku]?.length ?? 0) : 0
+            const compCount = getCompetitorsForProduct(p).length
             const losingBuybox = p.buybox_price != null && (p.catalog_price == null || p.buybox_price < p.catalog_price)
             const relation = getRelatedGroup(p)
             const previousRelation = index > 0 ? getRelatedGroup(pagedProducts[index - 1]) : null
@@ -1206,7 +1238,7 @@ export default function ProductsTable({
       {/* Detail panel — slides in from the right */}
       {(() => {
         const skuKey = selected?.sku ?? selected?.id ?? ''
-        const comps = selected ? (localCompetitors[skuKey] ?? []) : []
+        const comps = selected ? getCompetitorsForProduct(selected) : []
         const compCount = comps.length
         const suggestions = selected ? (rivalSuggestions[selected.id] ?? []) : []
         const hasSearchedRivals = selected ? Object.prototype.hasOwnProperty.call(rivalSuggestions, selected.id) : false
@@ -1725,7 +1757,7 @@ export default function ProductsTable({
                                             Ver publicación
                                           </a>
                                         )}
-                                        <button onClick={() => handlePauseCompetitor(entry.key, skuKey, !isPaused)}
+                                        <button onClick={() => handlePauseCompetitor(entry.key, skuKey, !isPaused, entry.comp?.our_product_id ?? null)}
                                           className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors text-left">
                                           {isPaused ? (
                                             <><svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>Activar</>
@@ -1734,7 +1766,7 @@ export default function ProductsTable({
                                           )}
                                         </button>
                                         <div className="border-t border-gray-100 my-1" />
-                                        <button onClick={() => handleRemoveCompetitor(entry.key, skuKey)}
+                                        <button onClick={() => handleRemoveCompetitor(entry.key, skuKey, entry.comp?.our_product_id ?? null)}
                                           className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors text-left">
                                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                                           Eliminar
@@ -1869,6 +1901,7 @@ export default function ProductsTable({
       {/* Add competitor modal */}
       {showAddModal && selected && (
         <AddCompetitorModal
+          initialProductId={selected.id}
           initialSku={selected.sku ?? selected.id}
           availableSkus={Array.from(new Set(products.map(p => p.sku).filter(Boolean))) as string[]}
           onClose={() => setShowAddModal(false)}

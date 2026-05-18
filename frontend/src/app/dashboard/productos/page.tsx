@@ -14,7 +14,7 @@ const PRODUCT_SELECT = `id, title, subtitle, sku, price, sale_price, catalog_pri
  warranty, health, automatic_relist, catalog_listing,
  date_created, last_updated, synced_at, start_time, stop_time`
 
-const COMPETITOR_SELECT = 'id, our_sku, title, price, currency_id, usd_price, status, thumbnail, permalink, seller_id, seller_name, synced_at, paused'
+const COMPETITOR_SELECT = 'id, our_sku, our_product_id, title, price, currency_id, usd_price, status, thumbnail, permalink, seller_id, seller_name, synced_at, paused'
 
 async function fetchAllProducts(supabase: ReturnType<typeof createAdminClient>) {
   const pageSize = 1000
