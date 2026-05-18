@@ -257,6 +257,7 @@ function AddCompetitorModal({
           itemIdOrUrl: competitorInput,
           ourSku: linkMode === 'sku' ? selectedSku : initialSku,
           ourProductId: linkMode === 'mlu' ? initialProductId : null,
+          linkMode,
         }),
       })
     const data = await res.json()
@@ -663,7 +664,7 @@ export default function ProductsTable({
       const res = await fetch('/api/competitors', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemIdOrUrl: input, ourSku: sku, ourProductId: product.id }),
+        body: JSON.stringify({ itemIdOrUrl: input, ourSku: sku, ourProductId: product.id, linkMode: 'mlu' }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'No se pudo agregar el rival')

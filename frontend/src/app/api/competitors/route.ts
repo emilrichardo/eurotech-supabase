@@ -143,7 +143,7 @@ async function fetchFromItem(
 }
 
 export async function POST(req: NextRequest) {
-  const { itemIdOrUrl, ourSku, ourProductId } = await req.json()
+  const { itemIdOrUrl, ourSku, ourProductId, linkMode } = await req.json()
 
   const { catalogId, itemId } = parseInput(itemIdOrUrl)
   if (!catalogId && !itemId) {
@@ -154,6 +154,46 @@ export async function POST(req: NextRequest) {
   }
 
   const admin = createAdminClient()
+
+  let resolvedOwnSku = ourSku as string | null
+  let resolvedOwnProductId = ourProductId as string | null
+
+  if (resolvedOwnProductId) {
+    const { data: ownProduct, error: ownProductError } = await admin
+      .schema('ml').from('ml_products')
+      .select('id, sku')
+      .eq('id', resolvedOwnProductId)
+      .maybeSingle()
+
+    if (ownProductError) {
+      return NextResponse.json({ error: ownProductError.message }, { status: 500 })
+    }
+    if (!ownProduct) {
+      return NextResponse.json({ error: 'No se encontró la publicación propia seleccionada' }, { status: 400 })
+    }
+
+    resolvedOwnSku = (ownProduct.sku as string | null) ?? resolvedOwnSku
+  } else if (resolvedOwnSku) {
+    const { data: sameSkuProducts, error: sameSkuError } = await admin
+      .schema('ml').from('ml_products')
+      .select('id')
+      .eq('sku', resolvedOwnSku)
+      .neq('status', 'closed')
+
+    if (sameSkuError) {
+      return NextResponse.json({ error: sameSkuError.message }, { status: 500 })
+    }
+
+    const activeCount = sameSkuProducts?.length ?? 0
+    if (activeCount > 1 && linkMode !== 'sku') {
+      return NextResponse.json(
+        {
+          error: 'Este SKU está en más de una publicación. Reabrí el modal y vinculá por MLU publicación para elegir una sola.',
+        },
+        { status: 409 }
+      )
+    }
+  }
 
   const { data: tokenRow } = await admin
     .schema('ml').from('ml_tokens')
@@ -214,18 +254,18 @@ export async function POST(req: NextRequest) {
     .maybeSingle()
 
   const sameProductLink = existing && (
-    (ourProductId && existing.our_product_id === ourProductId) ||
-    (!ourProductId && ourSku && existing.our_sku === ourSku && !existing.our_product_id)
+    (resolvedOwnProductId && existing.our_product_id === resolvedOwnProductId) ||
+    (!resolvedOwnProductId && resolvedOwnSku && existing.our_sku === resolvedOwnSku && !existing.our_product_id)
   )
 
   if (sameProductLink) {
-    return NextResponse.json({ error: 'Este competidor ya está vinculado a este SKU' }, { status: 409 })
+    return NextResponse.json({ error: 'Este competidor ya está vinculado a este producto' }, { status: 409 })
   }
 
   const record = {
     id: resolvedId,
-    our_sku: ourSku ?? null,
-    our_product_id: ourProductId ?? null,
+    our_sku: resolvedOwnSku ?? null,
+    our_product_id: resolvedOwnProductId ?? null,
     title: (mlData.title as string) ?? null,
     price: (mlData.price as number) ?? null,
     original_price: (mlData.original_price as number) ?? null,
