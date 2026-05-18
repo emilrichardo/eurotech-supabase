@@ -1,10 +1,28 @@
 #!/usr/bin/env bash
 set -e
 
-PROJECT_REF="ncgvyabucowccaddyjna"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ -f "$ROOT_DIR/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/.env"
+  set +a
+fi
+
+PROJECT_REF="${SUPABASE_PROJECT_REF:-ncgvyabucowccaddyjna}"
+SUPABASE_TOKEN="${SUPABASE_ACCESS_TOKEN:-}"
+
+if [ -z "$SUPABASE_TOKEN" ]; then
+  echo "❌ Missing SUPABASE_ACCESS_TOKEN in $ROOT_DIR/.env"
+  exit 1
+fi
+
+echo "▶ Logging in to Supabase Cloud..."
+supabase login --token "$SUPABASE_TOKEN"
 
 echo "▶ Linking project..."
-supabase link --project-ref $PROJECT_REF
+supabase link --project-ref "$PROJECT_REF"
 
 echo "▶ Pushing secrets to Supabase..."
 # Reemplaza estos valores antes de ejecutar

@@ -1,6 +1,8 @@
 # Supabase
 .branches
-.temp
+.temp/*
+!.temp/project-ref
+!.temp/linked-project.json
 
 # dotenvx
 .env.keys
