@@ -99,23 +99,33 @@ export default function HistorySection({
   const [filter, setFilter] = useState<'all' | 'unread'>('unread')
   const [filterSku, setFilterSku] = useState('')
   const [filterRule, setFilterRule] = useState('')
+  const [filterCompetitor, setFilterCompetitor] = useState('')
   const [deletingRead, setDeletingRead] = useState(false)
   const [panelSku, setPanelSku] = useState<string | null>(null)
   const [panelData, setPanelData] = useState<PanelData | null>(null)
   const [panelLoading, setPanelLoading] = useState(false)
 
   const skuMap = new Map(skus.map(s => [s.sku, s.title]))
+  const competitorOptions = Array.from(new Set(
+    alerts
+      .map(a => a.ml_competitor_items?.seller_name?.trim() || a.ml_competitor_items?.title?.trim() || '')
+      .filter(Boolean)
+  )).sort((a, b) => a.localeCompare(b, 'es'))
 
   const visible = alerts.filter(a => {
     if (!skuMap.has(a.our_sku)) return false
     if (filter === 'unread' && a.read_at) return false
     if (filterSku && a.our_sku !== filterSku) return false
     if (filterRule && a.ml_price_alert_rules?.id !== filterRule) return false
+    if (filterCompetitor) {
+      const competitorName = a.ml_competitor_items?.seller_name?.trim() || a.ml_competitor_items?.title?.trim() || ''
+      if (competitorName !== filterCompetitor) return false
+    }
     return true
   })
 
   const unreadCount = alerts.filter(a => !a.read_at && skuMap.has(a.our_sku)).length
-  const hasActiveFilters = filter !== 'unread' || !!filterSku || !!filterRule
+  const hasActiveFilters = filter !== 'unread' || !!filterSku || !!filterRule || !!filterCompetitor
 
   useEffect(() => {
     if (!panelSku) { setPanelData(null); return }
@@ -155,6 +165,7 @@ export default function HistorySection({
     setFilter('unread')
     setFilterSku('')
     setFilterRule('')
+    setFilterCompetitor('')
   }
 
   // Build sorted price list for panel
@@ -225,6 +236,17 @@ export default function HistorySection({
             <option value="">Todos los SKU</option>
             {skus.map(s => <option key={s.sku} value={s.sku}>{s.sku}</option>)}
           </select>
+
+          {competitorOptions.length > 0 && (
+            <select
+              value={filterCompetitor}
+              onChange={e => setFilterCompetitor(e.target.value)}
+              className="bg-transparent border-0 text-xs text-gray-700 font-medium focus:outline-none focus:ring-0 pr-7 py-1 cursor-pointer hover:text-gray-900"
+            >
+              <option value="">Todos los competidores</option>
+              {competitorOptions.map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
+          )}
 
           <div className="flex-1" />
 

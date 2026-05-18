@@ -10,7 +10,7 @@ const PRODUCT_SELECT = `id, title, subtitle, sku, price, sale_price, catalog_pri
  available_quantity, sold_quantity, initial_quantity,
  status, condition, listing_type_id, buying_mode,
  thumbnail, permalink, category_id, domain_id,
- catalog_product_id, seller_custom_field,
+ catalog_product_id, parent_item_id, family_id, family_name, user_product_id, inventory_id, seller_custom_field,
  warranty, health, automatic_relist, catalog_listing,
  date_created, last_updated, synced_at, start_time, stop_time`
 

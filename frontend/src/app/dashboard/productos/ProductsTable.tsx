@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import Image from 'next/image'
 
 function Accordion({ title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
@@ -50,6 +50,11 @@ type Product = {
   category_id: string | null
   domain_id: string | null
   catalog_product_id: string | null
+  parent_item_id: string | null
+  family_id: string | null
+  family_name: string | null
+  user_product_id: string | null
+  inventory_id: string | null
   seller_custom_field: string | null
   warranty: string | null
   health: number | null
@@ -348,6 +353,23 @@ function CompetitorDot({ count }: { count: number }) {
 
 type ViewMode = 'tabla' | 'listado' | 'grid'
 type CompetitorFilter = 'all' | 'with' | 'without'
+type GroupMode = 'none' | 'related'
+
+type RelatedGroup = {
+  key: string
+  label: string
+  detail: string
+  source: 'catalog' | 'user_product' | 'parent' | 'family' | 'inventory' | 'standalone'
+}
+
+function getRelatedGroup(product: Product): RelatedGroup {
+  if (product.catalog_product_id) return { key: `catalog:${product.catalog_product_id}`, label: 'Catalogo ML', detail: product.catalog_product_id, source: 'catalog' }
+  if (product.user_product_id) return { key: `user_product:${product.user_product_id}`, label: 'User product ML', detail: product.user_product_id, source: 'user_product' }
+  if (product.parent_item_id) return { key: `parent:${product.parent_item_id}`, label: 'Publicacion padre', detail: product.parent_item_id, source: 'parent' }
+  if (product.family_id) return { key: `family:${product.family_id}`, label: product.family_name ? `Familia ${product.family_name}` : 'Familia ML', detail: product.family_id, source: 'family' }
+  if (product.inventory_id) return { key: `inventory:${product.inventory_id}`, label: 'Inventario ML', detail: product.inventory_id, source: 'inventory' }
+  return { key: `single:${product.id}`, label: 'Sin relacion', detail: product.id, source: 'standalone' }
+}
 
 function IconTable() {
   return (
@@ -425,6 +447,8 @@ export default function ProductsTable({
   const [showAddModal, setShowAddModal] = useState(false)
   const [search, setSearch] = useState('')
   const [competitorFilter, setCompetitorFilter] = useState<CompetitorFilter>('all')
+  const [competitorNameFilter, setCompetitorNameFilter] = useState('')
+  const [groupMode, setGroupMode] = useState<GroupMode>('none')
   const [showPaused, setShowPaused] = useState(false)
   const [panelTab, setPanelTab] = useState<'competitors' | 'details'>('competitors')
   const [openGear, setOpenGear] = useState<string | null>(null)
@@ -662,6 +686,19 @@ export default function ProductsTable({
     .map(id => ({ id, name: categoryMap[id] ?? id }))
     .sort((a, b) => a.name.localeCompare(b.name))
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
+  const competitorNameOptions = Array.from(new Set(
+    Object.values(localCompetitors)
+      .flat()
+      .map(c => c.seller_name?.trim() || c.title?.trim() || '')
+      .filter(Boolean)
+  )).sort((a, b) => a.localeCompare(b, 'es'))
+
+  const relationGroupByKey = new Map<string, Product[]>()
+  for (const product of products) {
+    const relation = getRelatedGroup(product)
+    if (!relationGroupByKey.has(relation.key)) relationGroupByKey.set(relation.key, [])
+    relationGroupByKey.get(relation.key)!.push(product)
+  }
 
   function resetPage() { setCurrentPage(0) }
 
@@ -680,12 +717,27 @@ export default function ProductsTable({
         !p.id.toLowerCase().includes(q)
       ) return false
     }
-    const competitorCount = p.sku ? (localCompetitors[p.sku]?.length ?? 0) : 0
+    const competitorItems = p.sku ? (localCompetitors[p.sku]?.filter(c => showPaused || !c.paused) ?? []) : []
+    const competitorCount = competitorItems.length
     if (competitorFilter === 'with' && competitorCount === 0) return false
     if (competitorFilter === 'without' && competitorCount > 0) return false
+    if (competitorNameFilter) {
+      const hasCompetitor = competitorItems.some(c => (c.seller_name?.trim() || c.title?.trim() || '') === competitorNameFilter)
+      if (!hasCompetitor) return false
+    }
     if (selectedCategory && p.category_id !== selectedCategory) return false
     return true
   }).sort((a, b) => {
+    if (groupMode === 'related') {
+      const aGroup = getRelatedGroup(a)
+      const bGroup = getRelatedGroup(b)
+      if (aGroup.key !== bGroup.key) {
+        const aSize = relationGroupByKey.get(aGroup.key)?.length ?? 1
+        const bSize = relationGroupByKey.get(bGroup.key)?.length ?? 1
+        if (aSize !== bSize) return bSize - aSize
+        return `${aGroup.label} ${aGroup.detail}`.localeCompare(`${bGroup.label} ${bGroup.detail}`, 'es')
+      }
+    }
     const aLosing = (a.buybox_price != null && (a.catalog_price == null || a.buybox_price < a.catalog_price)) ? 0 : 1
     const bLosing = (b.buybox_price != null && (b.catalog_price == null || b.buybox_price < b.catalog_price)) ? 0 : 1
     if (aLosing !== bLosing) return aLosing - bLosing
@@ -700,15 +752,29 @@ export default function ProductsTable({
   const hiddenFilterLabels = [
     competitorFilter === 'with' ? 'con rivales' : null,
     competitorFilter === 'without' ? 'sin rivales' : null,
+    competitorNameFilter ? `competidor: ${competitorNameFilter}` : null,
     selectedCategory ? 'categoria' : null,
     !showPaused && !hasSearch ? 'sin pausados' : null,
+    groupMode === 'related' ? 'agrupado por relacion ML' : null,
   ].filter(Boolean)
 
   function clearFilters() {
     setCompetitorFilter('all')
+    setCompetitorNameFilter('')
     setSelectedCategory(null)
     setShowPaused(false)
+    setGroupMode('none')
     resetPage()
+  }
+
+  const groupMetaByKey = new Map<string, { title: string; count: number; related: boolean }>()
+  for (const [key, groupedProducts] of relationGroupByKey.entries()) {
+    const relation = getRelatedGroup(groupedProducts[0])
+    groupMetaByKey.set(key, {
+      title: `${relation.label}: ${relation.detail}`,
+      count: groupedProducts.length,
+      related: groupedProducts.length > 1 && relation.source !== 'standalone',
+    })
   }
 
   function EmptyProductsState() {
@@ -722,7 +788,7 @@ export default function ProductsTable({
               ? `Filtros activos: ${hiddenFilterLabels.join(', ')}.`
               : 'No hay productos sincronizados para esta vista.'}
         </p>
-        {(competitorFilter !== 'all' || selectedCategory) && (
+        {(competitorFilter !== 'all' || competitorNameFilter || selectedCategory || groupMode !== 'none') && (
           <button
             onClick={clearFilters}
             className="mt-4 px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
@@ -794,6 +860,39 @@ export default function ProductsTable({
           ))}
         </div>
 
+        {competitorNameOptions.length > 0 && (
+          <select
+            value={competitorNameFilter}
+            onChange={e => { setCompetitorNameFilter(e.target.value); resetPage() }}
+            className="py-1.5 px-3 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">Todos los competidores</option>
+            {competitorNameOptions.map(name => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+        )}
+
+        <div className="inline-flex items-center rounded-lg border border-gray-200 bg-white p-0.5">
+          {([
+            ['none', 'Sin agrupar'],
+            ['related', 'Agrupar relacionados'],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => { setGroupMode(value); resetPage() }}
+              className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                groupMode === value
+                  ? 'bg-gray-900 text-white shadow-sm'
+                  : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
         {pausedCount > 0 && (
           <button
             onClick={() => { setShowPaused(v => !v); resetPage() }}
@@ -846,56 +945,72 @@ export default function ProductsTable({
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {pagedProducts.map((p) => {
+              {pagedProducts.map((p, index) => {
                 const compCount = p.sku ? (localCompetitors[p.sku]?.length ?? 0) : 0
+                const relation = getRelatedGroup(p)
+                const previousRelation = index > 0 ? getRelatedGroup(pagedProducts[index - 1]) : null
+                const groupInfo = groupMetaByKey.get(relation.key)
                 return (
-                  <tr
-                    key={p.id}
-                    onClick={() => handleSelect(p)}
-                    className={`cursor-pointer transition-colors ${selected?.id === p.id ? 'bg-blue-50' : compCount > 0 ? 'hover:bg-orange-50/30' : 'hover:bg-gray-50'}`}
-                  >
-                    <td className="px-4 py-2">
-                      {p.thumbnail ? (
-                        <Image src={imgUrl(p.thumbnail)!} alt={p.title} width={64} height={64} className="rounded object-contain w-16 h-16" unoptimized />
-                      ) : (
-                        <div className="w-16 h-16 bg-gray-100 rounded" />
-                      )}
-                    </td>
-                    <td className="px-4 py-3 max-w-xs">
-                      <div className="flex items-center gap-2">
-                        <p className="font-medium text-gray-900 line-clamp-2 text-sm">{p.title}</p>
-                        <CompetitorDot count={compCount} />
-                      </div>
-                      <p className="text-xs text-gray-400 mt-0.5">{p.condition === 'new' ? 'Nuevo' : 'Usado'} · {p.id}</p>
-                    </td>
-                    <td className="px-4 py-3 text-xs font-mono text-gray-600">{p.sku ?? '—'}</td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
-                      <p className={`font-medium ${p.sale_price != null ? 'text-emerald-600' : 'text-gray-900'}`}>{formatPrice(p.sale_price ?? p.catalog_price ?? p.price, p.currency_id)}</p>
-                      {p.sale_price != null && p.price != null && p.sale_price !== p.price && (
-                        <p className="text-xs text-gray-400 line-through">{formatPrice(p.price, p.currency_id)}</p>
-                      )}
-                      {p.sale_price == null && p.catalog_price != null && p.price != null && p.catalog_price !== p.price && (
-                        <p className="text-xs text-gray-400">pub. {formatPrice(p.price, p.currency_id)}</p>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
-                      {p.catalog_price != null
-                        ? <span className={p.catalog_price < (p.price ?? 0) ? 'text-blue-600 font-medium' : 'text-gray-700'}>{formatPrice(p.catalog_price, p.currency_id)}</span>
-                        : <span className="text-gray-300">—</span>}
-                    </td>
-                    <td className="px-4 py-3 text-right text-gray-700">{p.available_quantity ?? '—'}</td>
-                    <td className="px-4 py-3 text-right text-gray-700">{p.sold_quantity ?? '—'}</td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLOR[p.status ?? ''] ?? 'bg-gray-100 text-gray-600'}`}>
-                        {STATUS_LABEL[p.status ?? ''] ?? p.status ?? '—'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-xs whitespace-nowrap" suppressHydrationWarning>
-                      <span className={isStale(p.last_updated) ? 'text-amber-500 font-medium' : 'text-gray-400'} suppressHydrationWarning>
-                        {formatRelative(p.last_updated)}
-                      </span>
-                    </td>
-                  </tr>
+                  <Fragment key={p.id}>
+                    {groupMode === 'related' && groupInfo && (!previousRelation || previousRelation.key !== relation.key) && (
+                      <tr className="bg-gray-50/80 border-b border-gray-100">
+                        <td colSpan={9} className="px-4 py-2.5 text-xs">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-semibold text-gray-700">{groupInfo.title}</span>
+                            <span className={`px-2 py-0.5 rounded-full font-medium ${groupInfo.related ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-600'}`}>
+                              {groupInfo.related ? `${groupInfo.count} relacionados` : 'individual'}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    <tr
+                      onClick={() => handleSelect(p)}
+                      className={`cursor-pointer transition-colors ${selected?.id === p.id ? 'bg-blue-50' : compCount > 0 ? 'hover:bg-orange-50/30' : 'hover:bg-gray-50'}`}
+                    >
+                      <td className="px-4 py-2">
+                        {p.thumbnail ? (
+                          <Image src={imgUrl(p.thumbnail)!} alt={p.title} width={64} height={64} className="rounded object-contain w-16 h-16" unoptimized />
+                        ) : (
+                          <div className="w-16 h-16 bg-gray-100 rounded" />
+                        )}
+                      </td>
+                      <td className="px-4 py-3 max-w-xs">
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium text-gray-900 line-clamp-2 text-sm">{p.title}</p>
+                          <CompetitorDot count={compCount} />
+                        </div>
+                        <p className="text-xs text-gray-400 mt-0.5">{p.condition === 'new' ? 'Nuevo' : 'Usado'} · {p.id}</p>
+                      </td>
+                      <td className="px-4 py-3 text-xs font-mono text-gray-600">{p.sku ?? '—'}</td>
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                        <p className={`font-medium ${p.sale_price != null ? 'text-emerald-600' : 'text-gray-900'}`}>{formatPrice(p.sale_price ?? p.catalog_price ?? p.price, p.currency_id)}</p>
+                        {p.sale_price != null && p.price != null && p.sale_price !== p.price && (
+                          <p className="text-xs text-gray-400 line-through">{formatPrice(p.price, p.currency_id)}</p>
+                        )}
+                        {p.sale_price == null && p.catalog_price != null && p.price != null && p.catalog_price !== p.price && (
+                          <p className="text-xs text-gray-400">pub. {formatPrice(p.price, p.currency_id)}</p>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                        {p.catalog_price != null
+                          ? <span className={p.catalog_price < (p.price ?? 0) ? 'text-blue-600 font-medium' : 'text-gray-700'}>{formatPrice(p.catalog_price, p.currency_id)}</span>
+                          : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-right text-gray-700">{p.available_quantity ?? '—'}</td>
+                      <td className="px-4 py-3 text-right text-gray-700">{p.sold_quantity ?? '—'}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLOR[p.status ?? ''] ?? 'bg-gray-100 text-gray-600'}`}>
+                          {STATUS_LABEL[p.status ?? ''] ?? p.status ?? '—'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs whitespace-nowrap" suppressHydrationWarning>
+                        <span className={isStale(p.last_updated) ? 'text-amber-500 font-medium' : 'text-gray-400'} suppressHydrationWarning>
+                          {formatRelative(p.last_updated)}
+                        </span>
+                      </td>
+                    </tr>
+                  </Fragment>
                 )
               })}
             </tbody>
@@ -906,54 +1021,66 @@ export default function ProductsTable({
       {/* Vista: Listado */}
       {view === 'listado' && (
         <div className="space-y-2">
-          {pagedProducts.map((p) => {
+          {pagedProducts.map((p, index) => {
             const compCount = p.sku ? (localCompetitors[p.sku]?.length ?? 0) : 0
             const losingBuybox = p.buybox_price != null && (p.catalog_price == null || p.buybox_price < p.catalog_price)
+            const relation = getRelatedGroup(p)
+            const previousRelation = index > 0 ? getRelatedGroup(pagedProducts[index - 1]) : null
+            const groupInfo = groupMetaByKey.get(relation.key)
             return (
-              <div
-                key={p.id}
-                onClick={() => handleSelect(p)}
-                className={`flex items-center gap-4 bg-white rounded-xl border px-4 py-3 cursor-pointer transition-colors ${selected?.id === p.id ? 'border-blue-300 bg-blue-50' : losingBuybox ? 'border-red-200 hover:bg-red-50/20' : compCount > 0 ? 'border-orange-100 hover:bg-orange-50/20' : 'border-gray-100 hover:bg-gray-50'}`}
-              >
-                <div className="relative shrink-0">
-                  {p.thumbnail ? (
-                    <Image src={imgUrl(p.thumbnail)!} alt={p.title} width={72} height={72} className="rounded object-contain w-18 h-18" unoptimized />
-                  ) : (
-                    <div className="w-18 h-18 bg-gray-100 rounded" />
-                  )}
-                  {(losingBuybox || compCount > 0) && (
-                    <span className="absolute -top-1.5 -left-1.5 flex items-center justify-center w-6 h-6 rounded-full shadow text-sm leading-none bg-white">
-                      {losingBuybox ? '🥈' : '🥇'}
+              <Fragment key={p.id}>
+                {groupMode === 'related' && groupInfo && (!previousRelation || previousRelation.key !== relation.key) && (
+                  <div className="px-1 pb-1 pt-2 text-xs flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold text-gray-700">{groupInfo.title}</span>
+                    <span className={`px-2 py-0.5 rounded-full font-medium ${groupInfo.related ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-600'}`}>
+                      {groupInfo.related ? `${groupInfo.count} relacionados` : 'individual'}
                     </span>
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="font-medium text-gray-900 line-clamp-1">{p.title}</p>
-                    <CompetitorDot count={compCount} />
                   </div>
-                  <p className="text-xs text-gray-400 mt-0.5 font-mono">{p.sku ?? p.id}</p>
+                )}
+                <div
+                  onClick={() => handleSelect(p)}
+                  className={`flex items-center gap-4 bg-white rounded-xl border px-4 py-3 cursor-pointer transition-colors ${selected?.id === p.id ? 'border-blue-300 bg-blue-50' : losingBuybox ? 'border-red-200 hover:bg-red-50/20' : compCount > 0 ? 'border-orange-100 hover:bg-orange-50/20' : 'border-gray-100 hover:bg-gray-50'}`}
+                >
+                  <div className="relative shrink-0">
+                    {p.thumbnail ? (
+                      <Image src={imgUrl(p.thumbnail)!} alt={p.title} width={72} height={72} className="rounded object-contain w-18 h-18" unoptimized />
+                    ) : (
+                      <div className="w-18 h-18 bg-gray-100 rounded" />
+                    )}
+                    {(losingBuybox || compCount > 0) && (
+                      <span className="absolute -top-1.5 -left-1.5 flex items-center justify-center w-6 h-6 rounded-full shadow text-sm leading-none bg-white">
+                        {losingBuybox ? '🥈' : '🥇'}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium text-gray-900 line-clamp-1">{p.title}</p>
+                      <CompetitorDot count={compCount} />
+                    </div>
+                    <p className="text-xs text-gray-400 mt-0.5 font-mono">{p.sku ?? p.id}</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className={`font-semibold ${p.sale_price != null ? 'text-emerald-600' : 'text-gray-900'}`}>{formatPrice(p.sale_price ?? p.catalog_price ?? p.price, p.currency_id)}</p>
+                    {p.sale_price != null && p.price != null && p.sale_price !== p.price && (
+                      <p className="text-xs text-gray-400 line-through">{formatPrice(p.price, p.currency_id)}</p>
+                    )}
+                    {p.sale_price == null && p.catalog_price != null && p.price != null && p.catalog_price !== p.price && (
+                      <p className="text-xs text-gray-400">pub. {formatPrice(p.price, p.currency_id)}</p>
+                    )}
+                    {losingBuybox && p.buybox_price != null && (
+                      <p className="text-xs text-red-500 font-medium">buy-box: {formatPrice(p.buybox_price, p.currency_id)}</p>
+                    )}
+                    <p className="text-xs text-gray-400 mt-0.5">Stock: {p.available_quantity ?? '—'}</p>
+                    <p className={`text-xs mt-0.5 ${isStale(p.last_updated) ? 'text-amber-500 font-medium' : 'text-gray-400'}`} suppressHydrationWarning>
+                      {formatRelative(p.last_updated)}
+                    </p>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ${STATUS_COLOR[p.status ?? ''] ?? 'bg-gray-100 text-gray-600'}`}>
+                    {STATUS_LABEL[p.status ?? ''] ?? p.status ?? '—'}
+                  </span>
                 </div>
-                <div className="text-right shrink-0">
-                  <p className={`font-semibold ${p.sale_price != null ? 'text-emerald-600' : 'text-gray-900'}`}>{formatPrice(p.sale_price ?? p.catalog_price ?? p.price, p.currency_id)}</p>
-                  {p.sale_price != null && p.price != null && p.sale_price !== p.price && (
-                    <p className="text-xs text-gray-400 line-through">{formatPrice(p.price, p.currency_id)}</p>
-                  )}
-                  {p.sale_price == null && p.catalog_price != null && p.price != null && p.catalog_price !== p.price && (
-                    <p className="text-xs text-gray-400">pub. {formatPrice(p.price, p.currency_id)}</p>
-                  )}
-                  {losingBuybox && p.buybox_price != null && (
-                    <p className="text-xs text-red-500 font-medium">buy-box: {formatPrice(p.buybox_price, p.currency_id)}</p>
-                  )}
-                  <p className="text-xs text-gray-400 mt-0.5">Stock: {p.available_quantity ?? '—'}</p>
-                  <p className={`text-xs mt-0.5 ${isStale(p.last_updated) ? 'text-amber-500 font-medium' : 'text-gray-400'}`} suppressHydrationWarning>
-                    {formatRelative(p.last_updated)}
-                  </p>
-                </div>
-                <span className={`px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ${STATUS_COLOR[p.status ?? ''] ?? 'bg-gray-100 text-gray-600'}`}>
-                  {STATUS_LABEL[p.status ?? ''] ?? p.status ?? '—'}
-                </span>
-              </div>
+              </Fragment>
             )
           })}
         </div>
@@ -962,67 +1089,79 @@ export default function ProductsTable({
       {/* Vista: Grid */}
       {view === 'grid' && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-          {pagedProducts.map((p) => {
+          {pagedProducts.map((p, index) => {
             const compCount = p.sku ? (localCompetitors[p.sku]?.length ?? 0) : 0
             const losingBuybox = p.buybox_price != null && (p.catalog_price == null || p.buybox_price < p.catalog_price)
+            const relation = getRelatedGroup(p)
+            const previousRelation = index > 0 ? getRelatedGroup(pagedProducts[index - 1]) : null
+            const groupInfo = groupMetaByKey.get(relation.key)
             return (
-              <div
-                key={p.id}
-                onClick={() => handleSelect(p)}
-                className={`bg-white rounded-xl border overflow-hidden cursor-pointer transition-colors relative ${selected?.id === p.id ? 'border-blue-300 bg-blue-50' : losingBuybox ? 'border-red-300 hover:border-red-400' : compCount > 0 ? 'border-orange-200 hover:border-orange-300' : 'border-gray-100 hover:border-gray-300'}`}
-              >
-                {/* Top-left medal */}
-                <div className="absolute top-2 left-2 z-10">
-                  {losingBuybox ? (
-                    <span className="flex items-center justify-center w-7 h-7 rounded-full bg-red-500 shadow text-base leading-none" title="Perdiste el primer puesto">
-                      🥈
+              <Fragment key={p.id}>
+                {groupMode === 'related' && groupInfo && (!previousRelation || previousRelation.key !== relation.key) && (
+                  <div className="col-span-full flex items-center gap-2 flex-wrap pt-2">
+                    <span className="text-xs font-semibold text-gray-700">{groupInfo.title}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${groupInfo.related ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-600'}`}>
+                      {groupInfo.related ? `${groupInfo.count} relacionados` : 'individual'}
                     </span>
-                  ) : compCount > 0 ? (
-                    <span className="flex items-center justify-center w-7 h-7 rounded-full bg-amber-400 shadow text-base leading-none" title="Primer puesto">
-                      🥇
-                    </span>
-                  ) : null}
-                </div>
-                {/* Top-right competitor count */}
-                {compCount > 0 && (
-                  <div className="absolute top-2 right-2 z-10">
-                    <CompetitorDot count={compCount} />
                   </div>
                 )}
-                <div className="flex items-center justify-center bg-gray-50 h-40">
-                  {p.thumbnail ? (
-                    <Image src={imgUrl(p.thumbnail)!} alt={p.title} width={140} height={140} className="object-contain w-full h-full p-3" unoptimized />
-                  ) : (
-                    <div className="w-full h-full bg-gray-100" />
-                  )}
-                </div>
-                <div className="p-3">
-                  <p className="text-sm font-medium text-gray-900 line-clamp-2 leading-snug">{p.title}</p>
-                  {p.sku && <p className="text-xs text-gray-400 font-mono mt-1">{p.sku}</p>}
-                  <div className="mt-2 flex items-center justify-between gap-1">
-                    <div>
-                      <span className={`text-sm font-semibold ${p.sale_price != null ? 'text-emerald-600' : 'text-gray-900'}`}>{formatPrice(p.sale_price ?? p.catalog_price ?? p.price, p.currency_id)}</span>
-                      {losingBuybox && p.buybox_price != null ? (
-                        <span className="ml-1.5 text-xs text-red-500 font-medium" title="Buy-box ganado por rival">
-                          rival: {formatPrice(p.buybox_price, p.currency_id)}
-                        </span>
-                      ) : null}
-                      {p.sale_price != null && p.price != null && p.sale_price !== p.price && (
-                        <p className="text-xs text-gray-400 mt-0.5 line-through">{formatPrice(p.price, p.currency_id)}</p>
-                      )}
-                      {p.sale_price == null && p.catalog_price != null && p.price != null && p.catalog_price !== p.price && (
-                        <p className="text-xs text-gray-400 mt-0.5">pub. {formatPrice(p.price, p.currency_id)}</p>
-                      )}
-                    </div>
-                    <span className={`px-1.5 py-0.5 rounded-full text-xs font-medium ${STATUS_COLOR[p.status ?? ''] ?? 'bg-gray-100 text-gray-600'}`}>
-                      {STATUS_LABEL[p.status ?? ''] ?? p.status ?? '—'}
-                    </span>
+                <div
+                  onClick={() => handleSelect(p)}
+                  className={`bg-white rounded-xl border overflow-hidden cursor-pointer transition-colors relative ${selected?.id === p.id ? 'border-blue-300 bg-blue-50' : losingBuybox ? 'border-red-300 hover:border-red-400' : compCount > 0 ? 'border-orange-200 hover:border-orange-300' : 'border-gray-100 hover:border-gray-300'}`}
+                >
+                  {/* Top-left medal */}
+                  <div className="absolute top-2 left-2 z-10">
+                    {losingBuybox ? (
+                      <span className="flex items-center justify-center w-7 h-7 rounded-full bg-red-500 shadow text-base leading-none" title="Perdiste el primer puesto">
+                        🥈
+                      </span>
+                    ) : compCount > 0 ? (
+                      <span className="flex items-center justify-center w-7 h-7 rounded-full bg-amber-400 shadow text-base leading-none" title="Primer puesto">
+                        🥇
+                      </span>
+                    ) : null}
                   </div>
-                  <p className={`text-xs mt-1 ${isStale(p.last_updated) ? 'text-amber-500 font-medium' : 'text-gray-400'}`} suppressHydrationWarning>
-                    {formatRelative(p.last_updated)}
-                  </p>
+                  {/* Top-right competitor count */}
+                  {compCount > 0 && (
+                    <div className="absolute top-2 right-2 z-10">
+                      <CompetitorDot count={compCount} />
+                    </div>
+                  )}
+                  <div className="flex items-center justify-center bg-gray-50 h-40">
+                    {p.thumbnail ? (
+                      <Image src={imgUrl(p.thumbnail)!} alt={p.title} width={140} height={140} className="object-contain w-full h-full p-3" unoptimized />
+                    ) : (
+                      <div className="w-full h-full bg-gray-100" />
+                    )}
+                  </div>
+                  <div className="p-3">
+                    <p className="text-sm font-medium text-gray-900 line-clamp-2 leading-snug">{p.title}</p>
+                    {p.sku && <p className="text-xs text-gray-400 font-mono mt-1">{p.sku}</p>}
+                    <div className="mt-2 flex items-center justify-between gap-1">
+                      <div>
+                        <span className={`text-sm font-semibold ${p.sale_price != null ? 'text-emerald-600' : 'text-gray-900'}`}>{formatPrice(p.sale_price ?? p.catalog_price ?? p.price, p.currency_id)}</span>
+                        {losingBuybox && p.buybox_price != null ? (
+                          <span className="ml-1.5 text-xs text-red-500 font-medium" title="Buy-box ganado por rival">
+                            rival: {formatPrice(p.buybox_price, p.currency_id)}
+                          </span>
+                        ) : null}
+                        {p.sale_price != null && p.price != null && p.sale_price !== p.price && (
+                          <p className="text-xs text-gray-400 mt-0.5 line-through">{formatPrice(p.price, p.currency_id)}</p>
+                        )}
+                        {p.sale_price == null && p.catalog_price != null && p.price != null && p.catalog_price !== p.price && (
+                          <p className="text-xs text-gray-400 mt-0.5">pub. {formatPrice(p.price, p.currency_id)}</p>
+                        )}
+                      </div>
+                      <span className={`px-1.5 py-0.5 rounded-full text-xs font-medium ${STATUS_COLOR[p.status ?? ''] ?? 'bg-gray-100 text-gray-600'}`}>
+                        {STATUS_LABEL[p.status ?? ''] ?? p.status ?? '—'}
+                      </span>
+                    </div>
+                    <p className={`text-xs mt-1 ${isStale(p.last_updated) ? 'text-amber-500 font-medium' : 'text-gray-400'}`} suppressHydrationWarning>
+                      {formatRelative(p.last_updated)}
+                    </p>
+                  </div>
                 </div>
-              </div>
+              </Fragment>
             )
           })}
         </div>
@@ -1643,6 +1782,11 @@ export default function ProductsTable({
                       <InfoRow label="SKU" value={selected.sku} />
                       <InfoRow label="Campo vendedor" value={selected.seller_custom_field} />
                       <InfoRow label="ID catálogo" value={selected.catalog_product_id} />
+                      <InfoRow label="Parent item" value={selected.parent_item_id} />
+                      <InfoRow label="User product" value={selected.user_product_id} />
+                      <InfoRow label="Family ID" value={selected.family_id} />
+                      <InfoRow label="Family name" value={selected.family_name} />
+                      <InfoRow label="Inventory ID" value={selected.inventory_id} />
                       <InfoRow label="Categoría" value={selected.category_id} />
                       <InfoRow label="Dominio" value={selected.domain_id} />
                       <InfoRow label="Precio publicación" value={formatPrice(selected.price, selected.currency_id)} />
