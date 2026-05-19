@@ -740,7 +740,7 @@ export default function ProductsTable({
   const hasSearch = trimmedSearch.length > 0
 
   const filteredProducts = products.filter(p => {
-    if (!hasSearch && !showPaused && p.status === 'paused') return false
+    if (!showPaused && p.status === 'paused') return false
     if (hasSearch) {
       const q = trimmedSearch.toLowerCase()
       if (
@@ -787,7 +787,7 @@ export default function ProductsTable({
     competitorFilter === 'without' ? 'sin rivales' : null,
     competitorNameFilter ? `competidor: ${competitorNameFilter}` : null,
     selectedCategory ? 'categoria' : null,
-    !showPaused && !hasSearch ? 'sin pausados' : null,
+    !showPaused ? 'sin pausados' : null,
     groupMode === 'related' ? 'agrupado por relacion ML' : null,
   ].filter(Boolean)
 
