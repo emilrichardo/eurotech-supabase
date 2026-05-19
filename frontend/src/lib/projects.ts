@@ -25,9 +25,8 @@ export const projects: ProjectConfig[] = [
     basePath: '/dashboard',
     accent: 'from-blue-500 to-cyan-500',
     views: [
-      { href: '/dashboard', label: 'Inicio', icon: 'home' },
-      { href: '/dashboard/productos', label: 'Productos', icon: 'box' },
-      { href: '/dashboard/alertas', label: 'Alertas de precio', icon: 'bell' },
+      { href: '/dashboard/alertas', label: 'Alertas de precios', icon: 'bell' },
+      { href: '/dashboard/productos', label: 'Agregar precios rivales', icon: 'box' },
       { href: '/dashboard/seguimiento', label: 'Seguimiento', icon: 'trend' },
       { href: '/dashboard/usuarios', label: 'Usuarios', icon: 'users' },
     ],
