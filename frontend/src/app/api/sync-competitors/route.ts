@@ -44,6 +44,16 @@ type OwnProductPrices = {
   catalogPrice: number | null
 }
 
+type CompetitorSyncItem = {
+  id: string
+  our_sku: string
+  our_product_id: string | null
+  permalink: string | null
+  seller_id: number | null
+  seller_name: string | null
+  price: number | null
+}
+
 function resolveReferencePrice(rule: Rule, prices: OwnProductPrices): number | null {
   if (prices.salePrice != null) return prices.salePrice
   if (rule.compare_catalog_price && prices.catalogPrice != null) return prices.catalogPrice
@@ -135,7 +145,7 @@ export async function POST() {
   // Load competitor items (including current price as "before")
   const { data: items, error } = await admin
     .schema('ml').from('ml_competitor_items')
-    .select('id, our_sku, permalink, seller_id, seller_name, price')
+    .select('id, our_sku, our_product_id, permalink, seller_id, seller_name, price')
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   if (!items || items.length === 0) {
@@ -145,22 +155,42 @@ export async function POST() {
   // Load enabled alert rules and our product prices (for diff calculation)
   const [rulesRes, productsRes] = await Promise.all([
     admin.schema('ml').from('ml_price_alert_rules').select('id, rule_type, sku, threshold_pct, compare_catalog_price').eq('enabled', true),
-    admin.schema('ml').from('ml_products').select('sku, price, sale_price, catalog_price').not('sku', 'is', null),
+    admin.schema('ml').from('ml_products').select('id, sku, price, sale_price, catalog_price').not('sku', 'is', null),
   ])
 
   const rules: Rule[] = rulesRes.data ?? []
-  // Use first row per SKU (multiple rows can share same SKU)
-  const ourPriceMap: Record<string, OwnProductPrices> = {}
+  const ourPriceByProductId: Record<string, OwnProductPrices> = {}
+  const ourPriceBySku: Record<string, OwnProductPrices> = {}
   for (const p of productsRes.data ?? []) {
-    if (p.sku && !(p.sku in ourPriceMap)) {
-      ourPriceMap[p.sku] = {
+    if (p.id && !(p.id in ourPriceByProductId)) {
+      ourPriceByProductId[p.id] = {
+        listPrice: p.price ?? null,
+        salePrice: p.sale_price ?? null,
+        catalogPrice: p.catalog_price ?? null,
+      }
+    }
+    if (p.sku && !(p.sku in ourPriceBySku)) {
+      ourPriceBySku[p.sku] = {
         listPrice: p.price ?? null,
         salePrice: p.sale_price ?? null,
         catalogPrice: p.catalog_price ?? null,
       }
     }
   }
-  console.log(`[sync-competitors] rules=${rules.length} skus_with_price=${Object.keys(ourPriceMap).length}`)
+  console.log(`[sync-competitors] rules=${rules.length} product_prices=${Object.keys(ourPriceByProductId).length} sku_prices=${Object.keys(ourPriceBySku).length}`)
+
+  const fallbackOwnPrices: OwnProductPrices = {
+    listPrice: null,
+    salePrice: null,
+    catalogPrice: null,
+  }
+
+  function getOwnPrices(item: CompetitorSyncItem): OwnProductPrices {
+    if (item.our_product_id && ourPriceByProductId[item.our_product_id]) {
+      return ourPriceByProductId[item.our_product_id]
+    }
+    return ourPriceBySku[item.our_sku] ?? fallbackOwnPrices
+  }
 
   let updated = 0
   let failed = 0
@@ -264,11 +294,7 @@ export async function POST() {
 
         if (!updateData) { failed++; return }
 
-        const ownPrices = ourPriceMap[item.our_sku] ?? {
-          listPrice: null,
-          salePrice: null,
-          catalogPrice: null,
-        }
+        const ownPrices = getOwnPrices(item as CompetitorSyncItem)
         const loggedOurPrice = ownPrices.salePrice ?? ownPrices.catalogPrice ?? ownPrices.listPrice ?? 'NOT_FOUND'
         console.log(`[sync-competitors] item=${item.id} sku=${item.our_sku} prevPrice=${item.price} newPrice=${newPrice} ourPrice=${loggedOurPrice}`)
 

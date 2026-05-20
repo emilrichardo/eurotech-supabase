@@ -7,6 +7,9 @@ import RuleTypeBadge from './RuleTypeBadge'
 type AlertItem = {
   id: string
   our_sku: string
+  owner_product_id?: string | null
+  owner_title?: string | null
+  owner_lookup?: string | null
   competitor_item_id: string
   our_price: number | null
   competitor_price_before: number | null
@@ -101,7 +104,7 @@ export default function HistorySection({
   const [filterRule, setFilterRule] = useState('')
   const [filterCompetitor, setFilterCompetitor] = useState('')
   const [deletingRead, setDeletingRead] = useState(false)
-  const [panelSku, setPanelSku] = useState<string | null>(null)
+  const [panelTarget, setPanelTarget] = useState<string | null>(null)
   const [panelData, setPanelData] = useState<PanelData | null>(null)
   const [panelLoading, setPanelLoading] = useState(false)
 
@@ -111,6 +114,10 @@ export default function HistorySection({
       .map(a => a.ml_competitor_items?.seller_name?.trim() || a.ml_competitor_items?.title?.trim() || '')
       .filter(Boolean)
   )).sort((a, b) => a.localeCompare(b, 'es'))
+
+  function getAlertPanelTarget(alert: AlertItem) {
+    return alert.owner_lookup ?? alert.owner_product_id ?? alert.our_sku
+  }
 
   const visible = alerts.filter(a => {
     if (!skuMap.has(a.our_sku)) return false
@@ -128,13 +135,13 @@ export default function HistorySection({
   const hasActiveFilters = filter !== 'unread' || !!filterSku || !!filterRule || !!filterCompetitor
 
   useEffect(() => {
-    if (!panelSku) { setPanelData(null); return }
+    if (!panelTarget) { setPanelData(null); return }
     setPanelLoading(true)
-    fetch(`/api/product-panel/${encodeURIComponent(panelSku)}`)
+    fetch(`/api/product-panel/${encodeURIComponent(panelTarget)}`)
       .then(r => r.json())
       .then(data => setPanelData(data))
       .finally(() => setPanelLoading(false))
-  }, [panelSku])
+  }, [panelTarget])
 
   async function markRead(id: string) {
     setAlerts(prev => prev.map(a => a.id === id ? { ...a, read_at: new Date().toISOString() } : a))
@@ -303,7 +310,8 @@ export default function HistorySection({
             const priceWentDown = alert.competitor_price_after != null && alert.competitor_price_before != null
               && alert.competitor_price_after < alert.competitor_price_before
             const diff = alert.diff_pct
-            const isActive = panelSku === alert.our_sku
+            const panelLookup = getAlertPanelTarget(alert)
+            const isActive = panelTarget === panelLookup
             const ruleType = alert.ml_price_alert_rules?.rule_type ?? ''
             const isCheaper = ruleType === 'competitor_cheaper' || ruleType === 'price_diff_pct_above'
             const isPricier = ruleType === 'competitor_pricier' || ruleType === 'price_diff_pct_below'
@@ -321,7 +329,7 @@ export default function HistorySection({
             return (
               <div
                 key={alert.id}
-                onClick={() => setPanelSku(isActive ? null : alert.our_sku)}
+                onClick={() => setPanelTarget(isActive ? null : panelLookup)}
                 className={`group relative bg-white border border-gray-100 border-l-4 ${toneConfig.border} rounded-xl transition-all cursor-pointer hover:shadow-md hover:border-gray-200 ${isActive ? 'ring-2 ring-blue-400 ring-offset-1' : ''} ${isRead ? 'opacity-70' : ''}`}
               >
                 <div className="flex gap-3 p-4">
@@ -348,7 +356,7 @@ export default function HistorySection({
                     <div className="flex items-baseline gap-2 min-w-0">
                       <span className="font-mono text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded shrink-0">{alert.our_sku}</span>
                       <h3 className="text-sm font-semibold text-gray-900 truncate flex-1">
-                        {skuMap.get(alert.our_sku) ?? alert.our_sku}
+                        {alert.owner_title ?? skuMap.get(alert.our_sku) ?? alert.our_sku}
                       </h3>
                       <span className="text-[11px] text-gray-400 shrink-0">{formatRelative(alert.fired_at)}</span>
                     </div>
@@ -444,8 +452,8 @@ export default function HistorySection({
       )}
 
       {/* Product panel — slides in from the right */}
-      {panelSku && (
-        <div className="fixed inset-0 z-40 bg-black/20 backdrop-blur-[1px]" onClick={() => setPanelSku(null)}>
+      {panelTarget && (
+        <div className="fixed inset-0 z-40 bg-black/20 backdrop-blur-[1px]" onClick={() => setPanelTarget(null)}>
           <div
             className="absolute top-0 right-0 h-full w-full md:w-130 bg-white shadow-2xl flex flex-col"
             onClick={e => e.stopPropagation()}
@@ -459,12 +467,12 @@ export default function HistorySection({
                 {/* Header */}
                 <div className="flex items-start justify-between px-5 py-3 border-b border-gray-100 shrink-0">
                   <div className="min-w-0 flex-1 pr-3">
-                    <p className="text-xs text-gray-400 mb-0.5 font-mono">{panelSku}</p>
+                    <p className="text-xs text-gray-400 mb-0.5 font-mono">{panelTarget}</p>
                     <h2 className="font-semibold text-gray-900 leading-snug line-clamp-2 text-sm">
-                      {panelData.product?.title ?? skuMap.get(panelSku) ?? panelSku}
+                      {panelData.product?.title ?? visible.find(a => getAlertPanelTarget(a) === panelTarget)?.owner_title ?? panelTarget}
                     </h2>
                   </div>
-                  <button onClick={() => setPanelSku(null)} className="text-gray-400 hover:text-gray-700 text-2xl leading-none shrink-0">×</button>
+                  <button onClick={() => setPanelTarget(null)} className="text-gray-400 hover:text-gray-700 text-2xl leading-none shrink-0">×</button>
                 </div>
 
                 {/* Image + key info */}

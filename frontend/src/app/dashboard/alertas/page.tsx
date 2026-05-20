@@ -11,6 +11,7 @@ type RuleType =
   | 'price_diff_pct_below'
 
 type ProductPriceRow = {
+  id: string
   sku: string | null
   title: string
   price: number | null
@@ -31,10 +32,25 @@ type AlertRow = {
     compare_catalog_price: boolean | null
   } | null
   ml_competitor_items: {
+    our_product_id: string | null
     price: number | null
     paused: boolean | null
     status: string | null
   } | null
+}
+
+function resolveAlertProduct(
+  alert: AlertRow,
+  productById: Map<string, ProductPriceRow>,
+  productBySku: Map<string, ProductPriceRow>,
+) {
+  const ownerProductId = alert.ml_competitor_items?.our_product_id
+  if (ownerProductId && productById.has(ownerProductId)) return productById.get(ownerProductId) ?? null
+  return productBySku.get(alert.our_sku) ?? null
+}
+
+function getAlertOwnerKey(alert: AlertRow) {
+  return alert.ml_competitor_items?.our_product_id ?? `sku:${alert.our_sku}`
 }
 
 function resolveReferencePrice(
@@ -98,14 +114,14 @@ export default async function AlertasPage() {
         our_price, catalog_price, competitor_price_before, competitor_price_after,
         diff_pct, fired_at, read_at,
         ml_price_alert_rules ( id, name, rule_type, threshold_pct, compare_catalog_price ),
-        ml_competitor_items ( title, seller_name, thumbnail, price, paused, status )
+        ml_competitor_items ( title, seller_name, thumbnail, price, paused, status, our_product_id )
       `)
       .order('fired_at', { ascending: false })
       .limit(200),
 
     admin
       .schema('ml').from('ml_products')
-      .select('sku, title, price, sale_price, catalog_price, synced_at')
+      .select('id, sku, title, price, sale_price, catalog_price, synced_at')
       .not('sku', 'is', null)
       .eq('status', 'active')
       .order('sku')
@@ -119,21 +135,26 @@ export default async function AlertasPage() {
   const rules = (rulesRes.data ?? []) as any[]
 
   // SKUs de productos activos (solo active, filtrado en DB)
+  const productById = new Map<string, ProductPriceRow>()
   const productBySku = new Map<string, ProductPriceRow>()
   for (const p of (skusRes.data ?? []) as ProductPriceRow[]) {
+    productById.set(p.id, p)
     if (p.sku && !productBySku.has(p.sku)) productBySku.set(p.sku, p)
   }
 
-  // Deduplicar: conservar solo la última alerta por SKU (vienen ordenadas DESC)
-  // y excluir alertas de productos no activos
-  const seenSkus = new Set<string>()
+  // Deduplicar por publicación cuando exista our_product_id; si no, fallback a SKU.
+  const seenOwners = new Set<string>()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const alerts = ((alertsRes.data ?? []) as any[]).filter((a: any) => {
-    const product = productBySku.get(a.our_sku)
+    const product = resolveAlertProduct(a as AlertRow, productById, productBySku)
     if (!product) return false
     if (!isAlertStillCurrent(a as AlertRow, product)) return false
-    if (seenSkus.has(a.our_sku)) return false
-    seenSkus.add(a.our_sku)
+    const ownerKey = getAlertOwnerKey(a as AlertRow)
+    if (seenOwners.has(ownerKey)) return false
+    seenOwners.add(ownerKey)
+    a.owner_product_id = (a as AlertRow).ml_competitor_items?.our_product_id ?? product.id
+    a.owner_title = product.title
+    a.owner_lookup = (a as AlertRow).ml_competitor_items?.our_product_id ?? a.our_sku
     return true
   })
   console.log(`[alertas] rules=${rules.length} alerts=${alerts.length}`)

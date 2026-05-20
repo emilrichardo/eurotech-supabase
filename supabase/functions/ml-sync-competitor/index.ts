@@ -95,6 +95,7 @@ async function refreshToken(tokenRow: TokenRow): Promise<string> {
 interface CompetitorItem {
   id: string;
   our_sku: string;
+  our_product_id: string | null;
   price: number | null;
   previous_price: number | null;
   permalink: string | null;
@@ -282,7 +283,7 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
   // 1. Cargar todos los competitor items
   const { data: competitorItems, error: ciError } = await supabase
     .schema("ml").from("ml_competitor_items")
-    .select("id, our_sku, price, previous_price, permalink");
+    .select("id, our_sku, our_product_id, price, previous_price, permalink");
 
   if (ciError) throw new Error(`Error cargando competitor items: ${ciError.message}`);
   if (!competitorItems || competitorItems.length === 0) {
@@ -299,24 +300,67 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
   if (rulesError) throw new Error(`Error cargando reglas: ${rulesError.message}`);
   const allRules: AlertRule[] = rules ?? [];
 
-  // 3. Cargar precios propios agrupados por SKU
+  // 3. Cargar precios propios por producto y por SKU (fallback para vínculos viejos)
+  const productIds = [...new Set(
+    (competitorItems as CompetitorItem[])
+      .map((c) => c.our_product_id)
+      .filter((id): id is string => !!id)
+  )];
   const skus = [...new Set((competitorItems as CompetitorItem[]).map((c) => c.our_sku))];
-  const { data: ownProducts, error: prodError } = await supabase
-    .schema("ml").from("ml_products")
-    .select("sku, price, sale_price, catalog_price")
-    .in("sku", skus);
+  const [ownProductsByIdRes, ownProductsBySkuRes] = await Promise.all([
+    productIds.length > 0
+      ? supabase
+        .schema("ml").from("ml_products")
+        .select("id, sku, price, sale_price, catalog_price")
+        .in("id", productIds)
+      : Promise.resolve({ data: [], error: null }),
+    skus.length > 0
+      ? supabase
+        .schema("ml").from("ml_products")
+        .select("id, sku, price, sale_price, catalog_price")
+        .in("sku", skus)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
 
-  if (prodError) throw new Error(`Error cargando precios propios: ${prodError.message}`);
+  if (ownProductsByIdRes.error) {
+    throw new Error(`Error cargando precios propios por producto: ${ownProductsByIdRes.error.message}`);
+  }
+  if (ownProductsBySkuRes.error) {
+    throw new Error(`Error cargando precios propios por SKU: ${ownProductsBySkuRes.error.message}`);
+  }
 
-  const ownPriceMap = new Map<string, OwnProductPrices>();
-  for (const p of ownProducts ?? []) {
-    if (p.sku && !ownPriceMap.has(p.sku)) {
-      ownPriceMap.set(p.sku, {
+  const ownPriceByProductId = new Map<string, OwnProductPrices>();
+  for (const p of ownProductsByIdRes.data ?? []) {
+    if (p.id && !ownPriceByProductId.has(p.id)) {
+      ownPriceByProductId.set(p.id, {
         listPrice: p.price ?? null,
         salePrice: p.sale_price ?? null,
         catalogPrice: p.catalog_price ?? null,
       });
     }
+  }
+
+  const ownPriceBySku = new Map<string, OwnProductPrices>();
+  for (const p of ownProductsBySkuRes.data ?? []) {
+    if (p.sku && !ownPriceBySku.has(p.sku)) {
+      ownPriceBySku.set(p.sku, {
+        listPrice: p.price ?? null,
+        salePrice: p.sale_price ?? null,
+        catalogPrice: p.catalog_price ?? null,
+      });
+    }
+  }
+
+  function getOwnPrices(item: CompetitorItem): OwnProductPrices {
+    if (item.our_product_id) {
+      const productPrices = ownPriceByProductId.get(item.our_product_id);
+      if (productPrices) return productPrices;
+    }
+    return ownPriceBySku.get(item.our_sku) ?? {
+      listPrice: null,
+      salePrice: null,
+      catalogPrice: null,
+    };
   }
 
   const token = tokenRow.access_token;
@@ -353,11 +397,7 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
     }[];
   } {
     const prevPrice = item.price ?? null;
-    const ownPrices = ownPriceMap.get(item.our_sku) ?? {
-      listPrice: null,
-      salePrice: null,
-      catalogPrice: null,
-    };
+    const ownPrices = getOwnPrices(item);
 
     const update: Record<string, unknown> = {
       id: item.id,
@@ -482,11 +522,7 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
       }
 
       const prevPrice = local.price ?? null;
-      const ownPrices = ownPriceMap.get(local.our_sku) ?? {
-        listPrice: null,
-        salePrice: null,
-        catalogPrice: null,
-      };
+      const ownPrices = getOwnPrices(local);
 
       updateRows.push({
         id: result.id,
