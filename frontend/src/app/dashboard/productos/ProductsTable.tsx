@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, startTransition, useDeferredValue, useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 
 function Accordion({ title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
@@ -219,6 +219,7 @@ type RivalSearchCacheEntry = {
 }
 
 const RIVAL_SEARCH_STORAGE_KEY = 'ml-rival-search-results-v1'
+const PRODUCT_FAVORITES_STORAGE_KEY = 'ml-product-favorites-v1'
 const RIVAL_SEARCH_COST_ESTIMATE = '~US$0.01-0.03'
 
 function AddCompetitorModal({
@@ -392,25 +393,81 @@ function getPublicationTypeClasses(product: Product) {
     : 'bg-slate-100 text-slate-700'
 }
 
-function isSyncedProduct(product: Product) {
-  return Boolean(product.synced_at)
-}
-
-function SyncBadge({ product }: { product: Product }) {
-  const synced = isSyncedProduct(product)
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${synced ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${synced ? 'bg-emerald-500' : 'bg-gray-400'}`} />
-      {synced ? 'Sincronizado' : 'Pendiente'}
-    </span>
-  )
-}
-
 function PublicationTypeBadge({ product }: { product: Product }) {
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${getPublicationTypeClasses(product)}`}>
       {getPublicationTypeLabel(product)}
     </span>
+  )
+}
+
+function getRelatedProducts(product: Product, relationGroupByKey: Map<string, Product[]>) {
+  const relation = getRelatedGroup(product)
+  const related = relationGroupByKey.get(relation.key) ?? []
+  return related.filter(candidate => candidate.id !== product.id)
+}
+
+function formatRelatedProductLabel(product: Product) {
+  return `${product.id} · ${getPublicationTypeLabel(product)}`
+}
+
+function StarButton({ active, onClick, className = '' }: { active: boolean; onClick: (event: React.MouseEvent<HTMLButtonElement>) => void; className?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex h-7 w-7 items-center justify-center rounded-full border transition-colors ${
+        active
+          ? 'border-amber-300 bg-amber-50 text-amber-500 hover:bg-amber-100'
+          : 'border-gray-200 bg-white text-gray-300 hover:border-amber-200 hover:text-amber-400'
+      } ${className}`}
+      title={active ? 'Quitar destacado' : 'Destacar producto'}
+      aria-label={active ? 'Quitar destacado' : 'Destacar producto'}
+    >
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill={active ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.56.56 0 011.04 0l2.12 5.39a.56.56 0 00.48.35l5.77.43a.56.56 0 01.32.99l-4.4 3.7a.56.56 0 00-.18.56l1.38 5.62a.56.56 0 01-.84.61L12.3 18.1a.56.56 0 00-.6 0l-4.87 3.06a.56.56 0 01-.84-.61l1.38-5.62a.56.56 0 00-.18-.56l-4.4-3.7a.56.56 0 01.32-.99l5.77-.43a.56.56 0 00.48-.35l2.12-5.39z" />
+      </svg>
+    </button>
+  )
+}
+
+function RelationButton({
+  product,
+  relationGroupByKey,
+  onOpenRelated,
+}: {
+  product: Product
+  relationGroupByKey: Map<string, Product[]>
+  onOpenRelated: (product: Product) => void
+}) {
+  const related = getRelatedProducts(product, relationGroupByKey)
+  if (related.length === 0) return null
+
+  const relatedLabel = related.length === 1
+    ? formatRelatedProductLabel(related[0])
+    : `${formatRelatedProductLabel(related[0])} +${related.length - 1}`
+
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation()
+        onOpenRelated(related[0])
+      }}
+      className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50/80 px-2.5 py-1 text-xs font-medium text-emerald-700 transition-colors hover:border-emerald-300 hover:bg-emerald-100"
+      title={related.map(formatRelatedProductLabel).join(', ')}
+    >
+      <svg className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 1l4 4-4 4" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 11V9a4 4 0 014-4h14" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 23l-4-4 4-4" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 13v2a4 4 0 01-4 4H3" />
+      </svg>
+      <span className="truncate">Sync: {relatedLabel}</span>
+      <svg className="h-3.5 w-3.5 shrink-0 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+      </svg>
+    </button>
   )
 }
 
@@ -501,6 +558,7 @@ export default function ProductsTable({
   const [localCompetitors, setLocalCompetitors] = useState<Record<string, Competitor[]>>(() => indexCompetitorsByOwner(competitorsBySku))
   const [showAddModal, setShowAddModal] = useState(false)
   const [search, setSearch] = useState('')
+  const deferredSearch = useDeferredValue(search)
   const [competitorFilter, setCompetitorFilter] = useState<CompetitorFilter>('all')
   const [competitorNameFilter, setCompetitorNameFilter] = useState('')
   const [groupMode, setGroupMode] = useState<GroupMode>('none')
@@ -518,6 +576,7 @@ export default function ProductsTable({
   const [rivalSearchLoadingId, setRivalSearchLoadingId] = useState<string | null>(null)
   const [rivalSearchError, setRivalSearchError] = useState<string | null>(null)
   const [addingSuggestionKey, setAddingSuggestionKey] = useState<string | null>(null)
+  const [favoriteProductIds, setFavoriteProductIds] = useState<string[]>([])
 
   function getCompetitorOwnerKey(input: { id: string; sku: string | null } | Competitor) {
     if ('our_product_id' in input && input.our_product_id) return `product:${input.our_product_id}`
@@ -558,6 +617,19 @@ export default function ProductsTable({
   }, [])
 
   useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(PRODUCT_FAVORITES_STORAGE_KEY)
+      if (!raw) return
+      const ids = JSON.parse(raw)
+      if (Array.isArray(ids)) {
+        setFavoriteProductIds(ids.filter((value): value is string => typeof value === 'string'))
+      }
+    } catch {
+      window.localStorage.removeItem(PRODUCT_FAVORITES_STORAGE_KEY)
+    }
+  }, [])
+
+  useEffect(() => {
     setRivalSearchError(null)
     setOpenGear(null)
   }, [selected?.id])
@@ -569,6 +641,14 @@ export default function ProductsTable({
       if (entry) cache[productId] = entry
       else delete cache[productId]
       window.localStorage.setItem(RIVAL_SEARCH_STORAGE_KEY, JSON.stringify(cache))
+    } catch {
+      // Local storage is best-effort only.
+    }
+  }
+
+  function persistFavorites(nextIds: string[]) {
+    try {
+      window.localStorage.setItem(PRODUCT_FAVORITES_STORAGE_KEY, JSON.stringify(nextIds))
     } catch {
       // Local storage is best-effort only.
     }
@@ -614,6 +694,21 @@ export default function ProductsTable({
 
   function handleSelect(p: Product) {
     setSelected(selected?.id === p.id ? null : p)
+  }
+
+  function handleOpenRelatedProduct(product: Product) {
+    setSelected(product)
+    setPanelTab('details')
+  }
+
+  function toggleFavorite(productId: string) {
+    setFavoriteProductIds(prev => {
+      const nextIds = prev.includes(productId)
+        ? prev.filter(id => id !== productId)
+        : [productId, ...prev]
+      persistFavorites(nextIds)
+      return nextIds
+    })
   }
 
   function handleAdded(c: Competitor) {
@@ -752,78 +847,107 @@ export default function ProductsTable({
     persistRivalSearch(productId, null)
   }
 
-  // Collect unique categories with names for filter
-  const categories = Array.from(new Set(products.map(p => p.category_id).filter(Boolean))) as string[]
-  const categoriesWithNames = categories
-    .map(id => ({ id, name: categoryMap[id] ?? id }))
-    .sort((a, b) => a.name.localeCompare(b.name))
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
-  const competitorNameOptions = Array.from(new Set(
-    Object.values(localCompetitors)
-      .flat()
-      .map(c => c.seller_name?.trim() || c.title?.trim() || '')
-      .filter(Boolean)
-  )).sort((a, b) => a.localeCompare(b, 'es'))
+  const categoriesWithNames = useMemo(() => {
+    const categories = Array.from(new Set(products.map(p => p.category_id).filter(Boolean))) as string[]
+    return categories
+      .map(id => ({ id, name: categoryMap[id] ?? id }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [products, categoryMap])
+  const competitorNameOptions = useMemo(() => (
+    Array.from(new Set(
+      Object.values(localCompetitors)
+        .flat()
+        .map(c => c.seller_name?.trim() || c.title?.trim() || '')
+        .filter(Boolean)
+    )).sort((a, b) => a.localeCompare(b, 'es'))
+  ), [localCompetitors])
 
-  const relationGroupByKey = new Map<string, Product[]>()
-  for (const product of products) {
-    const relation = getRelatedGroup(product)
-    if (!relationGroupByKey.has(relation.key)) relationGroupByKey.set(relation.key, [])
-    relationGroupByKey.get(relation.key)!.push(product)
-  }
+  const relationGroupByKey = useMemo(() => {
+    const grouped = new Map<string, Product[]>()
+    for (const product of products) {
+      const relation = getRelatedGroup(product)
+      if (!grouped.has(relation.key)) grouped.set(relation.key, [])
+      grouped.get(relation.key)!.push(product)
+    }
+    return grouped
+  }, [products])
+  const favoriteProductIdSet = useMemo(() => new Set(favoriteProductIds), [favoriteProductIds])
 
   function resetPage() { setCurrentPage(0) }
 
-  const pausedCount = products.filter(p => p.status === 'paused').length
-  const trimmedSearch = search.trim()
+  const pausedCount = useMemo(() => products.filter(p => p.status === 'paused').length, [products])
+  const trimmedSearch = deferredSearch.trim()
   const hasSearch = trimmedSearch.length > 0
 
-  const filteredProducts = products.filter(p => {
-    if (p.status === 'under_review') return false
-    if (!showPaused && p.status === 'paused') return false
-    if (publicationFilter === 'catalog' && getPublicationType(p) !== 'catalog') return false
-    if (publicationFilter === 'traditional' && getPublicationType(p) !== 'traditional') return false
-    if (hasSearch) {
-      const q = trimmedSearch.toLowerCase()
-      if (
-        !p.title?.toLowerCase().includes(q) &&
-        !p.sku?.toLowerCase().includes(q) &&
-        !p.seller_custom_field?.toLowerCase().includes(q) &&
-        !p.id.toLowerCase().includes(q)
-      ) return false
-    }
-    const competitorItems = getCompetitorsForProduct(p).filter(c => showPaused || !c.paused)
-    const competitorCount = competitorItems.length
-    if (competitorFilter === 'with' && competitorCount === 0) return false
-    if (competitorFilter === 'without' && competitorCount > 0) return false
-    if (competitorNameFilter) {
-      const hasCompetitor = competitorItems.some(c => (c.seller_name?.trim() || c.title?.trim() || '') === competitorNameFilter)
-      if (!hasCompetitor) return false
-    }
-    if (selectedCategory && p.category_id !== selectedCategory) return false
-    return true
-  }).sort((a, b) => {
-    if (groupMode === 'related') {
-      const aGroup = getRelatedGroup(a)
-      const bGroup = getRelatedGroup(b)
-      if (aGroup.key !== bGroup.key) {
-        const aSize = relationGroupByKey.get(aGroup.key)?.length ?? 1
-        const bSize = relationGroupByKey.get(bGroup.key)?.length ?? 1
-        if (aSize !== bSize) return bSize - aSize
-        return `${aGroup.label} ${aGroup.detail}`.localeCompare(`${bGroup.label} ${bGroup.detail}`, 'es')
+  const filteredProducts = useMemo(() => {
+    const normalizedQuery = hasSearch ? trimmedSearch.toLowerCase() : null
+
+    return products.filter(p => {
+      if (p.status === 'under_review') return false
+      if (!showPaused && p.status === 'paused') return false
+      if (publicationFilter === 'catalog' && getPublicationType(p) !== 'catalog') return false
+      if (publicationFilter === 'traditional' && getPublicationType(p) !== 'traditional') return false
+      if (normalizedQuery) {
+        if (
+          !p.title?.toLowerCase().includes(normalizedQuery) &&
+          !p.sku?.toLowerCase().includes(normalizedQuery) &&
+          !p.seller_custom_field?.toLowerCase().includes(normalizedQuery) &&
+          !p.id.toLowerCase().includes(normalizedQuery)
+        ) return false
       }
-    }
-    const aLosing = (a.buybox_price != null && (a.catalog_price == null || a.buybox_price < a.catalog_price)) ? 0 : 1
-    const bLosing = (b.buybox_price != null && (b.catalog_price == null || b.buybox_price < b.catalog_price)) ? 0 : 1
-    if (aLosing !== bLosing) return aLosing - bLosing
-    const aHas = getCompetitorsForProduct(a).length > 0 ? 0 : 1
-    const bHas = getCompetitorsForProduct(b).length > 0 ? 0 : 1
-    if (aHas !== bHas) return aHas - bHas
-    return 0
-  })
+      const competitorItems = getCompetitorsForProduct(p).filter(c => showPaused || !c.paused)
+      const competitorCount = competitorItems.length
+      if (competitorFilter === 'with' && competitorCount === 0) return false
+      if (competitorFilter === 'without' && competitorCount > 0) return false
+      if (competitorNameFilter) {
+        const hasCompetitor = competitorItems.some(c => (c.seller_name?.trim() || c.title?.trim() || '') === competitorNameFilter)
+        if (!hasCompetitor) return false
+      }
+      if (selectedCategory && p.category_id !== selectedCategory) return false
+      return true
+    }).sort((a, b) => {
+      const aFavorite = favoriteProductIdSet.has(a.id) ? 0 : 1
+      const bFavorite = favoriteProductIdSet.has(b.id) ? 0 : 1
+      if (aFavorite !== bFavorite) return aFavorite - bFavorite
+      if (groupMode === 'related') {
+        const aGroup = getRelatedGroup(a)
+        const bGroup = getRelatedGroup(b)
+        if (aGroup.key !== bGroup.key) {
+          const aSize = relationGroupByKey.get(aGroup.key)?.length ?? 1
+          const bSize = relationGroupByKey.get(bGroup.key)?.length ?? 1
+          if (aSize !== bSize) return bSize - aSize
+          return `${aGroup.label} ${aGroup.detail}`.localeCompare(`${bGroup.label} ${bGroup.detail}`, 'es')
+        }
+      }
+      const aLosing = (a.buybox_price != null && (a.catalog_price == null || a.buybox_price < a.catalog_price)) ? 0 : 1
+      const bLosing = (b.buybox_price != null && (b.catalog_price == null || b.buybox_price < b.catalog_price)) ? 0 : 1
+      if (aLosing !== bLosing) return aLosing - bLosing
+      const aHas = getCompetitorsForProduct(a).length > 0 ? 0 : 1
+      const bHas = getCompetitorsForProduct(b).length > 0 ? 0 : 1
+      if (aHas !== bHas) return aHas - bHas
+      return 0
+    })
+  }, [
+    products,
+    showPaused,
+    publicationFilter,
+    hasSearch,
+    trimmedSearch,
+    competitorFilter,
+    competitorNameFilter,
+    selectedCategory,
+    groupMode,
+    relationGroupByKey,
+    localCompetitors,
+    favoriteProductIdSet,
+  ])
 
   const totalPages = Math.ceil(filteredProducts.length / PAGE_SIZE)
-  const pagedProducts = filteredProducts.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE)
+  const pagedProducts = useMemo(
+    () => filteredProducts.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE),
+    [filteredProducts, currentPage]
+  )
   const hiddenFilterLabels = [
     competitorFilter === 'with' ? 'con rivales' : null,
     competitorFilter === 'without' ? 'sin rivales' : null,
@@ -845,18 +969,21 @@ export default function ProductsTable({
     resetPage()
   }
 
-  const catalogCount = products.filter(p => getPublicationType(p) === 'catalog').length
+  const catalogCount = useMemo(() => products.filter(p => getPublicationType(p) === 'catalog').length, [products])
   const traditionalCount = products.length - catalogCount
 
-  const groupMetaByKey = new Map<string, { title: string; count: number; related: boolean }>()
-  for (const [key, groupedProducts] of relationGroupByKey.entries()) {
-    const relation = getRelatedGroup(groupedProducts[0])
-    groupMetaByKey.set(key, {
-      title: `${relation.label}: ${relation.detail}`,
-      count: groupedProducts.length,
-      related: groupedProducts.length > 1 && relation.source !== 'standalone',
-    })
-  }
+  const groupMetaByKey = useMemo(() => {
+    const meta = new Map<string, { title: string; count: number; related: boolean }>()
+    for (const [key, groupedProducts] of relationGroupByKey.entries()) {
+      const relation = getRelatedGroup(groupedProducts[0])
+      meta.set(key, {
+        title: `${relation.label}: ${relation.detail}`,
+        count: groupedProducts.length,
+        related: groupedProducts.length > 1 && relation.source !== 'standalone',
+      })
+    }
+    return meta
+  }, [relationGroupByKey])
 
   function EmptyProductsState() {
     return (
@@ -867,7 +994,7 @@ export default function ProductsTable({
             ? `No encontramos "${trimmedSearch}" con los filtros activos.`
             : hiddenFilterLabels.length > 0
               ? `Filtros activos: ${hiddenFilterLabels.join(', ')}.`
-              : 'No hay productos sincronizados para esta vista.'}
+              : 'No hay productos para esta vista.'}
         </p>
         {(competitorFilter !== 'all' || competitorNameFilter || selectedCategory || groupMode !== 'none') && (
           <button
@@ -1016,7 +1143,7 @@ export default function ProductsTable({
         {([['tabla', <IconTable key="t" />], ['listado', <IconList key="l" />], ['grid', <IconGrid key="g" />]] as [ViewMode, React.ReactNode][]).map(([mode, icon]) => (
           <button
             key={mode}
-            onClick={() => setView(mode)}
+            onClick={() => startTransition(() => setView(mode))}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors capitalize ${
               view === mode ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 border border-gray-200 hover:bg-gray-50'
             }`}
@@ -1051,6 +1178,7 @@ export default function ProductsTable({
             <tbody className="divide-y divide-gray-50">
               {pagedProducts.map((p, index) => {
                 const compCount = getCompetitorsForProduct(p).length
+                const isFavorite = favoriteProductIdSet.has(p.id)
                 const relation = getRelatedGroup(p)
                 const previousRelation = index > 0 ? getRelatedGroup(pagedProducts[index - 1]) : null
                 const groupInfo = groupMetaByKey.get(relation.key)
@@ -1070,14 +1198,32 @@ export default function ProductsTable({
                     )}
                     <tr
                       onClick={() => handleSelect(p)}
-                      className={`cursor-pointer transition-colors ${selected?.id === p.id ? 'bg-blue-50' : compCount > 0 ? 'hover:bg-orange-50/30' : 'hover:bg-gray-50'}`}
+                      className={`cursor-pointer transition-colors ${
+                        selected?.id === p.id
+                          ? 'bg-blue-50'
+                          : isFavorite
+                            ? 'bg-amber-50/60 hover:bg-amber-50'
+                            : compCount > 0
+                              ? 'hover:bg-orange-50/30'
+                              : 'hover:bg-gray-50'
+                      }`}
                     >
                       <td className="px-4 py-2">
-                        {p.thumbnail ? (
-                          <Image src={imgUrl(p.thumbnail)!} alt={p.title} width={64} height={64} className="rounded object-contain w-16 h-16" unoptimized />
-                        ) : (
-                          <div className="w-16 h-16 bg-gray-100 rounded" />
-                        )}
+                        <div className="relative w-16 h-16">
+                          {p.thumbnail ? (
+                            <Image src={imgUrl(p.thumbnail)!} alt={p.title} width={64} height={64} className="rounded object-contain w-16 h-16" unoptimized />
+                          ) : (
+                            <div className="w-16 h-16 bg-gray-100 rounded" />
+                          )}
+                          <StarButton
+                            active={isFavorite}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              toggleFavorite(p.id)
+                            }}
+                            className="absolute -top-2 -right-2 h-6 w-6"
+                          />
+                        </div>
                       </td>
                       <td className="px-4 py-3 max-w-xs">
                         <div className="flex items-center gap-2">
@@ -1086,7 +1232,7 @@ export default function ProductsTable({
                         </div>
                         <div className="mt-1 flex flex-wrap items-center gap-1.5">
                           <PublicationTypeBadge product={p} />
-                          <SyncBadge product={p} />
+                          <RelationButton product={p} relationGroupByKey={relationGroupByKey} onOpenRelated={handleOpenRelatedProduct} />
                         </div>
                         <p className="text-xs text-gray-400 mt-0.5">{p.condition === 'new' ? 'Nuevo' : 'Usado'} · {p.id}</p>
                       </td>
@@ -1131,6 +1277,7 @@ export default function ProductsTable({
         <div className="space-y-2">
           {pagedProducts.map((p, index) => {
             const compCount = getCompetitorsForProduct(p).length
+            const isFavorite = favoriteProductIdSet.has(p.id)
             const losingBuybox = p.buybox_price != null && (p.catalog_price == null || p.buybox_price < p.catalog_price)
             const relation = getRelatedGroup(p)
             const previousRelation = index > 0 ? getRelatedGroup(pagedProducts[index - 1]) : null
@@ -1147,7 +1294,17 @@ export default function ProductsTable({
                 )}
                 <div
                   onClick={() => handleSelect(p)}
-                  className={`flex items-center gap-4 bg-white rounded-xl border px-4 py-3 cursor-pointer transition-colors ${selected?.id === p.id ? 'border-blue-300 bg-blue-50' : losingBuybox ? 'border-red-200 hover:bg-red-50/20' : compCount > 0 ? 'border-orange-100 hover:bg-orange-50/20' : 'border-gray-100 hover:bg-gray-50'}`}
+                  className={`flex items-center gap-4 bg-white rounded-xl border px-4 py-3 cursor-pointer transition-colors ${
+                    selected?.id === p.id
+                      ? 'border-blue-300 bg-blue-50'
+                      : isFavorite
+                        ? 'border-amber-200 bg-amber-50/60 hover:bg-amber-50'
+                        : losingBuybox
+                          ? 'border-red-200 hover:bg-red-50/20'
+                          : compCount > 0
+                            ? 'border-orange-100 hover:bg-orange-50/20'
+                            : 'border-gray-100 hover:bg-gray-50'
+                  }`}
                 >
                   <div className="relative shrink-0">
                     {p.thumbnail ? (
@@ -1160,6 +1317,14 @@ export default function ProductsTable({
                         {losingBuybox ? '🥈' : '🥇'}
                       </span>
                     )}
+                    <StarButton
+                      active={isFavorite}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        toggleFavorite(p.id)
+                      }}
+                      className="absolute -top-1.5 -right-1.5 h-6 w-6"
+                    />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
@@ -1168,7 +1333,7 @@ export default function ProductsTable({
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
                       <PublicationTypeBadge product={p} />
-                      <SyncBadge product={p} />
+                      <RelationButton product={p} relationGroupByKey={relationGroupByKey} onOpenRelated={handleOpenRelatedProduct} />
                     </div>
                     <p className="text-xs text-gray-400 mt-0.5 font-mono">{p.sku ?? p.id}</p>
                   </div>
@@ -1203,6 +1368,7 @@ export default function ProductsTable({
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
           {pagedProducts.map((p, index) => {
             const compCount = getCompetitorsForProduct(p).length
+            const isFavorite = favoriteProductIdSet.has(p.id)
             const losingBuybox = p.buybox_price != null && (p.catalog_price == null || p.buybox_price < p.catalog_price)
             const relation = getRelatedGroup(p)
             const previousRelation = index > 0 ? getRelatedGroup(pagedProducts[index - 1]) : null
@@ -1219,7 +1385,17 @@ export default function ProductsTable({
                 )}
                 <div
                   onClick={() => handleSelect(p)}
-                  className={`bg-white rounded-xl border overflow-hidden cursor-pointer transition-colors relative ${selected?.id === p.id ? 'border-blue-300 bg-blue-50' : losingBuybox ? 'border-red-300 hover:border-red-400' : compCount > 0 ? 'border-orange-200 hover:border-orange-300' : 'border-gray-100 hover:border-gray-300'}`}
+                  className={`bg-white rounded-xl border overflow-hidden cursor-pointer transition-colors relative ${
+                    selected?.id === p.id
+                      ? 'border-blue-300 bg-blue-50'
+                      : isFavorite
+                        ? 'border-amber-300 bg-amber-50/50 hover:border-amber-400'
+                        : losingBuybox
+                          ? 'border-red-300 hover:border-red-400'
+                          : compCount > 0
+                            ? 'border-orange-200 hover:border-orange-300'
+                            : 'border-gray-100 hover:border-gray-300'
+                  }`}
                 >
                   {/* Top-left medal */}
                   <div className="absolute top-2 left-2 z-10">
@@ -1239,6 +1415,15 @@ export default function ProductsTable({
                       <CompetitorDot count={compCount} />
                     </div>
                   )}
+                  <div className="absolute bottom-2 right-2 z-10">
+                    <StarButton
+                      active={isFavorite}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        toggleFavorite(p.id)
+                      }}
+                    />
+                  </div>
                   <div className="flex items-center justify-center bg-gray-50 h-40">
                     {p.thumbnail ? (
                       <Image src={imgUrl(p.thumbnail)!} alt={p.title} width={140} height={140} className="object-contain w-full h-full p-3" unoptimized />
@@ -1250,7 +1435,7 @@ export default function ProductsTable({
                     <p className="text-sm font-medium text-gray-900 line-clamp-2 leading-snug">{p.title}</p>
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
                       <PublicationTypeBadge product={p} />
-                      <SyncBadge product={p} />
+                      <RelationButton product={p} relationGroupByKey={relationGroupByKey} onOpenRelated={handleOpenRelatedProduct} />
                     </div>
                     {p.sku && <p className="text-xs text-gray-400 font-mono mt-1">{p.sku}</p>}
                     <div className="mt-2 flex items-center justify-between gap-1">
@@ -1328,6 +1513,8 @@ export default function ProductsTable({
         const hasSearchedRivals = selected ? Object.prototype.hasOwnProperty.call(rivalSuggestions, selected.id) : false
         const rivalSearchLoading = selected ? rivalSearchLoadingId === selected.id : false
         const rivalSearchCollapsed = selected ? (rivalResultsCollapsed[selected.id] ?? false) : false
+        const relatedProducts = selected ? getRelatedProducts(selected, relationGroupByKey) : []
+        const selectedIsFavorite = selected ? favoriteProductIdSet.has(selected.id) : false
         const currentCostEstimate = selected ? (rivalSearchCost[selected.id] ?? RIVAL_SEARCH_COST_ESTIMATE) : RIVAL_SEARCH_COST_ESTIMATE
         const pubPrice = selected?.price ?? null
         const salePrice = selected?.sale_price ?? null
@@ -1383,6 +1570,15 @@ export default function ProductsTable({
                     <span className={`text-xs font-medium ${syncProductMsg === 'Actualizado' ? 'text-green-600' : 'text-red-500'}`}>
                       {syncProductMsg}
                     </span>
+                  )}
+                  {selected && (
+                    <StarButton
+                      active={selectedIsFavorite}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        toggleFavorite(selected.id)
+                      }}
+                    />
                   )}
                   <button
                     onClick={() => handleSyncProduct(selected.id)}
@@ -1897,6 +2093,12 @@ export default function ProductsTable({
                       <InfoRow label="ID ML" value={selected.id} />
                       <InfoRow label="SKU" value={selected.sku} />
                       <InfoRow label="Campo vendedor" value={selected.seller_custom_field} />
+                      <InfoRow
+                        label="Sincronizado con"
+                        value={relatedProducts.length > 0
+                          ? relatedProducts.map(formatRelatedProductLabel).join(', ')
+                          : null}
+                      />
                       <InfoRow label="ID catálogo" value={selected.catalog_product_id} />
                       <InfoRow label="Parent item" value={selected.parent_item_id} />
                       <InfoRow label="User product" value={selected.user_product_id} />
@@ -1940,6 +2142,36 @@ export default function ProductsTable({
                       <InfoRow label="Precio original" value={formatPrice(selected.original_price, selected.currency_id)} />
                       <InfoRow label="Moneda" value={selected.currency_id} />
                     </Accordion>
+                    {relatedProducts.length > 0 && (
+                      <Accordion title="Publicaciones sincronizadas" defaultOpen>
+                        <div className="pt-4 space-y-3">
+                          {relatedProducts.map(product => (
+                            <button
+                              key={product.id}
+                              type="button"
+                              onClick={() => handleOpenRelatedProduct(product)}
+                              className="w-full rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-left transition-colors hover:bg-emerald-50"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-sm font-semibold text-gray-900">{product.id}</span>
+                                    <span className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-emerald-700">
+                                      {getPublicationTypeLabel(product)}
+                                    </span>
+                                  </div>
+                                  <p className="mt-1 line-clamp-2 text-sm text-gray-700">{product.title}</p>
+                                  <p className="mt-1 text-xs font-mono text-gray-500">{product.sku ?? 'Sin SKU'}</p>
+                                </div>
+                                <span className="shrink-0 rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-xs font-medium text-emerald-700">
+                                  Abrir
+                                </span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </Accordion>
+                    )}
                     <Accordion title="Stock y ventas">
                       <InfoRow label="Stock disponible" value={selected.available_quantity} />
                       <InfoRow label="Stock inicial" value={selected.initial_quantity} />
