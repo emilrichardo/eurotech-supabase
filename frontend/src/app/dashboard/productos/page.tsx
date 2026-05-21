@@ -26,6 +26,7 @@ async function fetchAllProducts(supabase: ReturnType<typeof createAdminClient>) 
       .schema('ml').from('ml_products')
       .select(PRODUCT_SELECT, { count: from === 0 ? 'exact' : undefined })
       .neq('status', 'closed')
+      .neq('status', 'under_review')
       .order('last_updated', { ascending: false })
       .range(from, from + pageSize - 1)
 

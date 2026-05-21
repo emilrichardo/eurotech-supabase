@@ -359,6 +359,7 @@ function CompetitorDot({ count }: { count: number }) {
 type ViewMode = 'tabla' | 'listado' | 'grid'
 type CompetitorFilter = 'all' | 'with' | 'without'
 type GroupMode = 'none' | 'related'
+type PublicationFilter = 'all' | 'traditional' | 'catalog'
 
 type RelatedGroup = {
   key: string
@@ -374,6 +375,43 @@ function getRelatedGroup(product: Product): RelatedGroup {
   if (product.family_id) return { key: `family:${product.family_id}`, label: product.family_name ? `Familia ${product.family_name}` : 'Familia ML', detail: product.family_id, source: 'family' }
   if (product.inventory_id) return { key: `inventory:${product.inventory_id}`, label: 'Inventario ML', detail: product.inventory_id, source: 'inventory' }
   return { key: `single:${product.id}`, label: 'Sin relacion', detail: product.id, source: 'standalone' }
+}
+
+function getPublicationType(product: Product): 'catalog' | 'traditional' {
+  if (product.catalog_listing === true) return 'catalog'
+  return 'traditional'
+}
+
+function getPublicationTypeLabel(product: Product) {
+  return getPublicationType(product) === 'catalog' ? 'Catálogo' : 'Tradicional'
+}
+
+function getPublicationTypeClasses(product: Product) {
+  return getPublicationType(product) === 'catalog'
+    ? 'bg-blue-100 text-blue-700'
+    : 'bg-slate-100 text-slate-700'
+}
+
+function isSyncedProduct(product: Product) {
+  return Boolean(product.synced_at)
+}
+
+function SyncBadge({ product }: { product: Product }) {
+  const synced = isSyncedProduct(product)
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${synced ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${synced ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+      {synced ? 'Sincronizado' : 'Pendiente'}
+    </span>
+  )
+}
+
+function PublicationTypeBadge({ product }: { product: Product }) {
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${getPublicationTypeClasses(product)}`}>
+      {getPublicationTypeLabel(product)}
+    </span>
+  )
 }
 
 function IconTable() {
@@ -466,6 +504,7 @@ export default function ProductsTable({
   const [competitorFilter, setCompetitorFilter] = useState<CompetitorFilter>('all')
   const [competitorNameFilter, setCompetitorNameFilter] = useState('')
   const [groupMode, setGroupMode] = useState<GroupMode>('none')
+  const [publicationFilter, setPublicationFilter] = useState<PublicationFilter>('all')
   const [showPaused, setShowPaused] = useState(false)
   const [panelTab, setPanelTab] = useState<'competitors' | 'details'>('competitors')
   const [openGear, setOpenGear] = useState<string | null>(null)
@@ -740,7 +779,10 @@ export default function ProductsTable({
   const hasSearch = trimmedSearch.length > 0
 
   const filteredProducts = products.filter(p => {
+    if (p.status === 'under_review') return false
     if (!showPaused && p.status === 'paused') return false
+    if (publicationFilter === 'catalog' && getPublicationType(p) !== 'catalog') return false
+    if (publicationFilter === 'traditional' && getPublicationType(p) !== 'traditional') return false
     if (hasSearch) {
       const q = trimmedSearch.toLowerCase()
       if (
@@ -787,6 +829,8 @@ export default function ProductsTable({
     competitorFilter === 'without' ? 'sin rivales' : null,
     competitorNameFilter ? `competidor: ${competitorNameFilter}` : null,
     selectedCategory ? 'categoria' : null,
+    publicationFilter === 'catalog' ? 'solo catalogo' : null,
+    publicationFilter === 'traditional' ? 'solo tradicionales' : null,
     !showPaused ? 'sin pausados' : null,
     groupMode === 'related' ? 'agrupado por relacion ML' : null,
   ].filter(Boolean)
@@ -795,10 +839,14 @@ export default function ProductsTable({
     setCompetitorFilter('all')
     setCompetitorNameFilter('')
     setSelectedCategory(null)
+    setPublicationFilter('all')
     setShowPaused(false)
     setGroupMode('none')
     resetPage()
   }
+
+  const catalogCount = products.filter(p => getPublicationType(p) === 'catalog').length
+  const traditionalCount = products.length - catalogCount
 
   const groupMetaByKey = new Map<string, { title: string; count: number; related: boolean }>()
   for (const [key, groupedProducts] of relationGroupByKey.entries()) {
@@ -846,7 +894,7 @@ export default function ProductsTable({
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
         {/* Search */}
-        <div className="relative flex-1 min-w-48">
+        <div className="relative flex-[1.3] min-w-[20rem]">
           <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
@@ -863,7 +911,7 @@ export default function ProductsTable({
         <select
           value={selectedCategory ?? ''}
           onChange={e => { setSelectedCategory(e.target.value || null); resetPage() }}
-          className="py-1.5 px-3 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-[11rem] py-1.5 px-3 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <option value="">Todas las categorías</option>
           {categoriesWithNames.map(({ id, name }) => (
@@ -871,6 +919,21 @@ export default function ProductsTable({
           ))}
         </select>
 
+        {competitorNameOptions.length > 0 && (
+          <select
+            value={competitorNameFilter}
+            onChange={e => { setCompetitorNameFilter(e.target.value); resetPage() }}
+            className="py-1.5 px-3 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">Todos los competidores</option>
+            {competitorNameOptions.map(name => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 mb-4">
         {/* Competitors filter */}
         <div className="inline-flex items-center rounded-lg border border-gray-200 bg-white p-0.5">
           {([
@@ -893,19 +956,6 @@ export default function ProductsTable({
           ))}
         </div>
 
-        {competitorNameOptions.length > 0 && (
-          <select
-            value={competitorNameFilter}
-            onChange={e => { setCompetitorNameFilter(e.target.value); resetPage() }}
-            className="py-1.5 px-3 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">Todos los competidores</option>
-            {competitorNameOptions.map(name => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
-        )}
-
         <div className="inline-flex items-center rounded-lg border border-gray-200 bg-white p-0.5">
           {([
             ['none', 'Sin agrupar'],
@@ -917,6 +967,27 @@ export default function ProductsTable({
               onClick={() => { setGroupMode(value); resetPage() }}
               className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
                 groupMode === value
+                  ? 'bg-gray-900 text-white shadow-sm'
+                  : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="inline-flex items-center rounded-lg border border-gray-200 bg-white p-0.5">
+          {([
+            ['all', `Todos (${products.length})`],
+            ['traditional', `Tradicionales (${traditionalCount})`],
+            ['catalog', `Catálogo (${catalogCount})`],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => { setPublicationFilter(value); resetPage() }}
+              className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                publicationFilter === value
                   ? 'bg-gray-900 text-white shadow-sm'
                   : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'
               }`}
@@ -1013,6 +1084,10 @@ export default function ProductsTable({
                           <p className="font-medium text-gray-900 line-clamp-2 text-sm">{p.title}</p>
                           <CompetitorDot count={compCount} />
                         </div>
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          <PublicationTypeBadge product={p} />
+                          <SyncBadge product={p} />
+                        </div>
                         <p className="text-xs text-gray-400 mt-0.5">{p.condition === 'new' ? 'Nuevo' : 'Usado'} · {p.id}</p>
                       </td>
                       <td className="px-4 py-3 text-xs font-mono text-gray-600">{p.sku ?? '—'}</td>
@@ -1090,6 +1165,10 @@ export default function ProductsTable({
                     <div className="flex items-center gap-2">
                       <p className="font-medium text-gray-900 line-clamp-1">{p.title}</p>
                       <CompetitorDot count={compCount} />
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                      <PublicationTypeBadge product={p} />
+                      <SyncBadge product={p} />
                     </div>
                     <p className="text-xs text-gray-400 mt-0.5 font-mono">{p.sku ?? p.id}</p>
                   </div>
@@ -1169,6 +1248,10 @@ export default function ProductsTable({
                   </div>
                   <div className="p-3">
                     <p className="text-sm font-medium text-gray-900 line-clamp-2 leading-snug">{p.title}</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <PublicationTypeBadge product={p} />
+                      <SyncBadge product={p} />
+                    </div>
                     {p.sku && <p className="text-xs text-gray-400 font-mono mt-1">{p.sku}</p>}
                     <div className="mt-2 flex items-center justify-between gap-1">
                       <div>
