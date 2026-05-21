@@ -15,71 +15,60 @@ const PRODUCT_SELECT = `id, title, subtitle, sku, price, sale_price, catalog_pri
  date_created, last_updated, synced_at, start_time, stop_time`
 
 const COMPETITOR_SELECT = 'id, our_sku, our_product_id, title, price, currency_id, usd_price, status, thumbnail, permalink, seller_id, seller_name, synced_at, paused'
-const MAX_PRODUCTS = 200
 
 async function fetchAllProducts(supabase: ReturnType<typeof createAdminClient>) {
-  const { data, error, count } = await supabase
-    .schema('ml').from('ml_products')
-    .select(PRODUCT_SELECT, { count: 'exact' })
-    .neq('status', 'closed')
-    .neq('status', 'under_review')
-    .order('last_updated', { ascending: false })
-    .range(0, MAX_PRODUCTS - 1)
+  const pageSize = 1000
+  const rows: unknown[] = []
+  let totalCount: number | null = null
 
-  return { data: data ?? [], error, count: count ?? data?.length ?? 0 }
+  for (let from = 0; ; from += pageSize) {
+    const { data, error, count } = await supabase
+      .schema('ml').from('ml_products')
+      .select(PRODUCT_SELECT, { count: from === 0 ? 'exact' : undefined })
+      .neq('status', 'closed')
+      .neq('status', 'under_review')
+      .order('last_updated', { ascending: false })
+      .range(from, from + pageSize - 1)
+
+    if (error) return { data: rows, error, count: totalCount }
+    if (from === 0) totalCount = count
+    rows.push(...(data ?? []))
+
+    if (!data || data.length < pageSize) break
+    if (totalCount !== null && rows.length >= totalCount) break
+  }
+
+  return { data: rows, error: null, count: totalCount ?? rows.length }
 }
 
-async function fetchCompetitorsForProducts(
-  supabase: ReturnType<typeof createAdminClient>,
-  products: Array<{ id: string; sku: string | null }>
-) {
-  const productIds = products.map(product => product.id)
-  const skus = Array.from(new Set(products.map(product => product.sku).filter(Boolean))) as string[]
-  const deduped = new Map<string, unknown>()
+async function fetchAllCompetitors(supabase: ReturnType<typeof createAdminClient>) {
+  const pageSize = 1000
+  const rows: unknown[] = []
 
-  if (productIds.length === 0 && skus.length === 0) {
-    return { data: [], error: null }
-  }
-
-  const chunkSize = 100
-
-  for (let i = 0; i < productIds.length; i += chunkSize) {
-    const chunk = productIds.slice(i, i + chunkSize)
+  for (let from = 0; ; from += pageSize) {
     const { data, error } = await supabase
       .schema('ml').from('ml_competitor_items')
       .select(COMPETITOR_SELECT)
-      .in('our_product_id', chunk)
+      .range(from, from + pageSize - 1)
 
-    if (error) return { data: Array.from(deduped.values()), error }
-    for (const item of data ?? []) {
-      deduped.set(`${item.id}:${item.our_product_id ?? ''}:${item.our_sku ?? ''}`, item)
-    }
+    if (error) return { data: rows, error }
+    rows.push(...(data ?? []))
+    if (!data || data.length < pageSize) break
   }
 
-  for (let i = 0; i < skus.length; i += chunkSize) {
-    const chunk = skus.slice(i, i + chunkSize)
-    const { data, error } = await supabase
-      .schema('ml').from('ml_competitor_items')
-      .select(COMPETITOR_SELECT)
-      .in('our_sku', chunk)
-
-    if (error) return { data: Array.from(deduped.values()), error }
-    for (const item of data ?? []) {
-      deduped.set(`${item.id}:${item.our_product_id ?? ''}:${item.our_sku ?? ''}`, item)
-    }
-  }
-
-  return { data: Array.from(deduped.values()), error: null }
+  return { data: rows, error: null }
 }
 
 export default async function ProductosPage() {
   const supabase = createAdminClient()
 
-  const [productsResult, categoriesResult, lastProductSyncResult, lastCompetitorSyncResult] = await Promise.all([
+  const [productsResult, competitorsResult, categoriesResult, lastProductSyncResult, lastCompetitorSyncResult] = await Promise.all([
     // List query: exclude heavy JSONB fields (pictures, shipping, descriptions, tags, attributes).
     // Those are only needed in the detail panel and are fetched on-demand via
     // /api/product-media/[id] when a row is clicked.
     fetchAllProducts(supabase),
+
+    fetchAllCompetitors(supabase),
 
     supabase
       .schema('ml').from('ml_categories')
@@ -101,10 +90,6 @@ export default async function ProductosPage() {
   ])
 
   const { data: products, error, count } = productsResult
-  const competitorsResult = await fetchCompetitorsForProducts(
-    supabase,
-    (products ?? []) as Array<{ id: string; sku: string | null }>
-  )
   const competitors = (competitorsResult.data ?? []) as { our_sku: string }[]
   const lastProductSync = lastProductSyncResult.data?.synced_at ?? null
   const lastCompetitorSync = lastCompetitorSyncResult.data?.synced_at ?? null
@@ -137,11 +122,7 @@ export default async function ProductosPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Productos</h1>
-          <p className="text-gray-500 text-sm mt-0.5">
-            {products.length < (count ?? products.length)
-              ? `Mostrando ${products.length} de ${count ?? products.length} publicaciones`
-              : `${count ?? products.length} publicaciones`}
-          </p>
+          <p className="text-gray-500 text-sm mt-0.5">{count ?? 0} publicaciones</p>
           <div className="flex items-center gap-4 mt-1.5">
             <span className="text-xs text-gray-400">
               Propios:{' '}
