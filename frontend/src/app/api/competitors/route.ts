@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { fetchUsdToUyu, convertUsdToUyu } from '@/lib/exchange-rate'
+import { normalizeSku } from '@/lib/sku'
 
 const ML_API = 'https://api.mercadolibre.com'
 
@@ -156,7 +157,7 @@ export async function POST(req: NextRequest) {
   const admin = createAdminClient()
 
   let resolvedOwnSku = ourSku as string | null
-  let resolvedOwnProductId = ourProductId as string | null
+  const resolvedOwnProductId = ourProductId as string | null
 
   if (resolvedOwnProductId) {
     const { data: ownProduct, error: ownProductError } = await admin
@@ -177,7 +178,7 @@ export async function POST(req: NextRequest) {
     const { data: sameSkuProducts, error: sameSkuError } = await admin
       .schema('ml').from('ml_products')
       .select('id')
-      .eq('sku', resolvedOwnSku)
+      .ilike('sku', resolvedOwnSku)
       .neq('status', 'closed')
 
     if (sameSkuError) {
@@ -255,7 +256,7 @@ export async function POST(req: NextRequest) {
 
   const sameProductLink = existing && (
     (resolvedOwnProductId && existing.our_product_id === resolvedOwnProductId) ||
-    (!resolvedOwnProductId && resolvedOwnSku && existing.our_sku === resolvedOwnSku && !existing.our_product_id)
+    (!resolvedOwnProductId && resolvedOwnSku && normalizeSku(existing.our_sku) === normalizeSku(resolvedOwnSku) && !existing.our_product_id)
   )
 
   if (sameProductLink) {
@@ -304,7 +305,7 @@ export async function PATCH(req: NextRequest) {
 
   query = ourProductId
     ? query.eq('our_product_id', ourProductId)
-    : query.eq('our_sku', ourSku)
+    : query.ilike('our_sku', ourSku)
 
   const { error } = await query
 
@@ -323,7 +324,7 @@ export async function DELETE(req: NextRequest) {
 
   query = ourProductId
     ? query.eq('our_product_id', ourProductId)
-    : query.eq('our_sku', ourSku)
+    : query.ilike('our_sku', ourSku)
 
   const { error } = await query
 

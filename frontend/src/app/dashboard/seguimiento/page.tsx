@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import TrackingSection from './TrackingSection'
+import { skuKey } from '@/lib/sku'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,16 +23,27 @@ export default async function SeguimientoPage() {
   ])
 
   const items = itemsRes.data ?? []
-  const skus = Array.from(
-    new Map((skusRes.data ?? []).map(p => [p.sku, {
+  const skuMap = new Map<string, {
+    sku: string
+    title: string
+    thumbnail: string | null
+    price: number | null
+    catalog_price: number | null
+    currency_id: string | null
+  }>()
+  for (const p of skusRes.data ?? []) {
+    const key = skuKey(p.sku as string | null)
+    if (!key || skuMap.has(key)) continue
+    skuMap.set(key, {
       sku: p.sku as string,
       title: p.title,
       thumbnail: p.thumbnail,
       price: p.price,
       catalog_price: p.catalog_price,
       currency_id: p.currency_id,
-    }])).values()
-  )
+    })
+  }
+  const skus = Array.from(skuMap.values())
 
   // Fetch latest 2 snapshots per item for delta display
   const ids = items.map(i => i.id)

@@ -1,7 +1,8 @@
 'use client'
 
-import { Fragment, startTransition, useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { Fragment, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
+import { skuKey } from '@/lib/sku'
 
 function Accordion({ title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
   const [open, setOpen] = useState(defaultOpen)
@@ -494,11 +495,13 @@ function IconGrid() {
 }
 
 export default function ProductsTable({
-  products,
+  initialProducts,
+  totalCount,
   competitorsBySku,
   categoryMap,
 }: {
-  products: Product[]
+  initialProducts: Product[]
+  totalCount: number
   competitorsBySku: Record<string, Competitor[]>
   categoryMap: Record<string, string>
 }) {
@@ -516,6 +519,8 @@ export default function ProductsTable({
     return indexed
   }
 
+  const [products, setProducts] = useState<Product[]>(initialProducts)
+  const [isLoadingMore, setIsLoadingMore] = useState(initialProducts.length < totalCount)
   const [selected, setSelected] = useState<Product | null>(null)
   type ProductMedia = { pictures: Product['pictures']; shipping: Product['shipping']; descriptions: Product['descriptions'] }
   // Heavy JSONB fields fetched on-demand when the panel opens (kept out of the
@@ -548,6 +553,54 @@ export default function ProductsTable({
     return () => { cancelled = true }
   }, [selected, mediaById])
 
+  useEffect(() => {
+    if (initialProducts.length >= totalCount) {
+      setIsLoadingMore(false)
+      return
+    }
+
+    let cancelled = false
+    const pageSize = 250
+
+    async function loadRemainingProducts() {
+      setIsLoadingMore(true)
+      let from = initialProducts.length
+
+      while (!cancelled && from < totalCount) {
+        const res = await fetch(`/api/products-page?from=${from}&limit=${pageSize}`)
+        const data = await res.json()
+        if (!res.ok) break
+
+        const nextProducts = Array.isArray(data.products) ? data.products as Product[] : []
+        if (nextProducts.length === 0) break
+
+        startTransition(() => {
+          setProducts(prev => {
+            const seen = new Set(prev.map(product => product.id))
+            const merged = [...prev]
+            for (const product of nextProducts) {
+              if (!seen.has(product.id)) merged.push(product)
+            }
+            return merged
+          })
+        })
+
+        from = typeof data.nextFrom === 'number' ? data.nextFrom : from + nextProducts.length
+        if (!data.hasMore) break
+      }
+
+      if (!cancelled) setIsLoadingMore(false)
+    }
+
+    loadRemainingProducts().catch(() => {
+      if (!cancelled) setIsLoadingMore(false)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [initialProducts.length, totalCount])
+
   const selectedMedia = selected ? mediaById[selected.id] : undefined
   const selectedPictures = selectedMedia?.pictures ?? selected?.pictures ?? null
   const selectedShipping = selectedMedia?.shipping ?? selected?.shipping ?? null
@@ -578,18 +631,24 @@ export default function ProductsTable({
   const [addingSuggestionKey, setAddingSuggestionKey] = useState<string | null>(null)
   const [favoriteProductIds, setFavoriteProductIds] = useState<string[]>([])
 
-  function getCompetitorOwnerKey(input: { id: string; sku: string | null } | Competitor) {
+  const getCompetitorOwnerKey = useCallback((input: { id: string; sku: string | null } | Competitor) => {
     if ('our_product_id' in input && input.our_product_id) return `product:${input.our_product_id}`
-    if ('our_sku' in input && input.our_sku) return `sku:${input.our_sku}`
-    if ('sku' in input && input.sku) return `sku:${input.sku}`
-    return `sku:${input.id}`
-  }
+    if ('our_sku' in input) return skuKey(input.our_sku) ?? `sku:${input.id}`
+    if ('sku' in input) return skuKey(input.sku) ?? `sku:${input.id}`
+    return `sku:${(input as { id: string }).id}`
+  }, [])
 
-  function getCompetitorsForProduct(product: Product) {
+  const getCompetitorsForProduct = useCallback((product: Product) => {
     const productScoped = localCompetitors[`product:${product.id}`] ?? []
     if (productScoped.length > 0) return productScoped
-    if (product.sku) return localCompetitors[`sku:${product.sku}`] ?? []
+    const key = skuKey(product.sku)
+    if (key) return localCompetitors[key] ?? []
     return []
+  }, [localCompetitors])
+
+  function getCompetitorConnectionLabel(competitor: Competitor | null | undefined) {
+    if (!competitor) return null
+    return competitor.our_product_id ? 'MLU' : 'SKU'
   }
 
   useEffect(() => {
@@ -724,7 +783,7 @@ export default function ProductsTable({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ itemId, ourSku: sku, ourProductId: ourProductId ?? null }),
     })
-    const ownerKey = ourProductId ? `product:${ourProductId}` : `sku:${sku}`
+    const ownerKey = ourProductId ? `product:${ourProductId}` : skuKey(sku) ?? `sku:${sku}`
     setLocalCompetitors(prev => ({
       ...prev,
       [ownerKey]: (prev[ownerKey] ?? []).filter(c => c.id !== itemId),
@@ -738,7 +797,7 @@ export default function ProductsTable({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ itemId, ourSku: sku, ourProductId: ourProductId ?? null, paused }),
     })
-    const ownerKey = ourProductId ? `product:${ourProductId}` : `sku:${sku}`
+    const ownerKey = ourProductId ? `product:${ourProductId}` : skuKey(sku) ?? `sku:${sku}`
     setLocalCompetitors(prev => ({
       ...prev,
       [ownerKey]: (prev[ownerKey] ?? []).map(c => c.id === itemId ? { ...c, paused } : c),
@@ -940,6 +999,7 @@ export default function ProductsTable({
     groupMode,
     relationGroupByKey,
     localCompetitors,
+    getCompetitorsForProduct,
     favoriteProductIdSet,
   ])
 
@@ -1154,6 +1214,12 @@ export default function ProductsTable({
         </div>
       </div>
 
+      {isLoadingMore && (
+        <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+          Mostrando una primera carga rápida. El resto de los productos sigue cargando en segundo plano.
+        </div>
+      )}
+
       {filteredProducts.length === 0 ? (
         <EmptyProductsState />
       ) : (
@@ -1238,7 +1304,7 @@ export default function ProductsTable({
                       </td>
                       <td className="px-4 py-3 text-xs font-mono text-gray-600">{p.sku ?? '—'}</td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
-                        <p className={`font-medium ${p.sale_price != null ? 'text-emerald-600' : 'text-gray-900'}`}>{formatPrice(p.sale_price ?? p.catalog_price ?? p.price, p.currency_id)}</p>
+                        <p className={`text-xs font-medium ${p.sale_price != null ? 'text-emerald-600' : 'text-gray-700'}`}>{formatPrice(p.sale_price ?? p.catalog_price ?? p.price, p.currency_id)}</p>
                         {p.sale_price != null && p.price != null && p.sale_price !== p.price && (
                           <p className="text-xs text-gray-400 line-through">{formatPrice(p.price, p.currency_id)}</p>
                         )}
@@ -1338,7 +1404,7 @@ export default function ProductsTable({
                     <p className="text-xs text-gray-400 mt-0.5 font-mono">{p.sku ?? p.id}</p>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className={`font-semibold ${p.sale_price != null ? 'text-emerald-600' : 'text-gray-900'}`}>{formatPrice(p.sale_price ?? p.catalog_price ?? p.price, p.currency_id)}</p>
+                    <p className={`text-sm font-medium ${p.sale_price != null ? 'text-emerald-600' : 'text-gray-700'}`}>{formatPrice(p.sale_price ?? p.catalog_price ?? p.price, p.currency_id)}</p>
                     {p.sale_price != null && p.price != null && p.sale_price !== p.price && (
                       <p className="text-xs text-gray-400 line-through">{formatPrice(p.price, p.currency_id)}</p>
                     )}
@@ -1440,7 +1506,7 @@ export default function ProductsTable({
                     {p.sku && <p className="text-xs text-gray-400 font-mono mt-1">{p.sku}</p>}
                     <div className="mt-2 flex items-center justify-between gap-1">
                       <div>
-                        <span className={`text-sm font-semibold ${p.sale_price != null ? 'text-emerald-600' : 'text-gray-900'}`}>{formatPrice(p.sale_price ?? p.catalog_price ?? p.price, p.currency_id)}</span>
+                        <span className={`text-xs font-medium ${p.sale_price != null ? 'text-emerald-600' : 'text-gray-700'}`}>{formatPrice(p.sale_price ?? p.catalog_price ?? p.price, p.currency_id)}</span>
                         {losingBuybox && p.buybox_price != null ? (
                           <span className="ml-1.5 text-xs text-red-500 font-medium" title="Buy-box ganado por rival">
                             rival: {formatPrice(p.buybox_price, p.currency_id)}
@@ -1987,15 +2053,26 @@ export default function ProductsTable({
                                   }`}>
                                     {entry.label}
                                   </p>
-                                  <p className="text-xs text-gray-400">
-                                    {entry.isOurs
-                                      ? entry.oursType === 'sale' ? 'Nuestro — oferta'
-                                      : entry.oursType === 'cat' ? 'Nuestro — catálogo'
-                                      : 'Nuestro'
-                                      : isPaused
-                                        ? 'Pausado'
-                                        : (entry.comp?.seller_name ?? 'Competidor')}
-                                  </p>
+                                  <div className="mt-0.5 flex items-center gap-1.5 flex-wrap">
+                                    <p className="text-xs text-gray-400">
+                                      {entry.isOurs
+                                        ? entry.oursType === 'sale' ? 'Nuestro — oferta'
+                                        : entry.oursType === 'cat' ? 'Nuestro — catálogo'
+                                        : 'Nuestro'
+                                        : isPaused
+                                          ? 'Pausado'
+                                          : (entry.comp?.seller_name ?? 'Competidor')}
+                                    </p>
+                                    {!entry.isOurs && entry.comp && (
+                                      <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold tracking-wide ${
+                                        entry.comp.our_product_id
+                                          ? 'bg-blue-100 text-blue-700'
+                                          : 'bg-gray-100 text-gray-600'
+                                      }`}>
+                                        {getCompetitorConnectionLabel(entry.comp)}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                                 <div className="text-right shrink-0">
                                   <p className={`text-base font-bold ${

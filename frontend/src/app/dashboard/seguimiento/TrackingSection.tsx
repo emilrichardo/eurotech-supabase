@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Image from 'next/image'
+import { skuKey } from '@/lib/sku'
 
 type Snapshot = {
   id: string
@@ -141,7 +142,7 @@ function ProductPickerModal({ skus, selected, onSelect, onClose }: {
             <span className="text-sm text-gray-400">Sin vincular</span>
           </button>
           {filtered.map(s => {
-            const isSelected = selected === s.sku
+            const isSelected = skuKey(selected) === skuKey(s.sku)
             const thumb = s.thumbnail ? s.thumbnail.replace('http://', 'https://').replace(/-I\.jpg$/, '-F.jpg') : null
             const price = s.catalog_price ?? s.price
             return (
@@ -189,7 +190,11 @@ function AddModal({ skus, onClose, onAdded }: {
   const [showPicker, setShowPicker] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const skuMap = new Map(skus.map(s => [s.sku, s]))
+  const skuMap = new Map<string, Sku>()
+  for (const sku of skus) {
+    const key = skuKey(sku.sku)
+    if (key && !skuMap.has(key)) skuMap.set(key, sku)
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -212,7 +217,7 @@ function AddModal({ skus, onClose, onAdded }: {
     }
   }
 
-  const linkedProduct = ourSku ? skuMap.get(ourSku) : null
+  const linkedProduct = ourSku ? skuMap.get(skuKey(ourSku) ?? '') ?? null : null
   const linkedThumb = linkedProduct?.thumbnail ? linkedProduct.thumbnail.replace('http://', 'https://').replace(/-I\.jpg$/, '-F.jpg') : null
 
   return (

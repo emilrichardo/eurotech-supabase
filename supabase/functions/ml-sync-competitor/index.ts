@@ -96,8 +96,10 @@ interface CompetitorItem {
   id: string;
   our_sku: string;
   our_product_id: string | null;
+  title: string | null;
   price: number | null;
   previous_price: number | null;
+  thumbnail: string | null;
   permalink: string | null;
 }
 
@@ -140,6 +142,7 @@ interface MLItemPrice {
   code: number;
   body: {
     id: string;
+    title: string | null;
     price: number | null;
     original_price: number | null;
     currency_id: string | null;
@@ -147,6 +150,8 @@ interface MLItemPrice {
     sold_quantity: number | null;
     status: string | null;
     health: number | null;
+    thumbnail: string | null;
+    permalink: string | null;
   };
 }
 
@@ -171,6 +176,12 @@ interface OwnProductPrices {
   listPrice: number | null;
   salePrice: number | null;
   catalogPrice: number | null;
+}
+
+function normalizeSku(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : null;
 }
 
 // ─── Exchange Rate ────────────────────────────────────────────────────────────
@@ -208,7 +219,7 @@ async function fetchItemPrices(
 ): Promise<MLItemPrice[]> {
   const idsParam = ids.join(",");
   const res = await fetch(
-    `${ML_API}/items?ids=${idsParam}&attributes=id,price,original_price,currency_id,available_quantity,sold_quantity,status,health`,
+    `${ML_API}/items?ids=${idsParam}&attributes=id,title,price,original_price,currency_id,available_quantity,sold_quantity,status,health,thumbnail,permalink`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
   if (!res.ok) {
@@ -283,7 +294,7 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
   // 1. Cargar todos los competitor items
   const { data: competitorItems, error: ciError } = await supabase
     .schema("ml").from("ml_competitor_items")
-    .select("id, our_sku, our_product_id, price, previous_price, permalink");
+    .select("id, our_sku, our_product_id, title, price, previous_price, thumbnail, permalink");
 
   if (ciError) throw new Error(`Error cargando competitor items: ${ciError.message}`);
   if (!competitorItems || competitorItems.length === 0) {
@@ -409,8 +420,9 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
       synced_at: new Date().toISOString(),
     };
 
+    const itemSku = normalizeSku(item.our_sku);
     const applicableRules = allRules.filter(
-      (r) => r.sku === null || r.sku === item.our_sku
+      (r) => r.sku === null || normalizeSku(r.sku) === itemSku
     );
     const alerts = applicableRules
       .filter((rule) => evaluateRule(rule, prevPrice, newPrice, ownPrices))
@@ -497,6 +509,7 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
 
     const updateRows: {
       id: string;
+      title: string | null;
       price: number | null;
       previous_price: number | null;
       currency_id: string;
@@ -505,6 +518,8 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
       sold_quantity: number | null;
       status: string | null;
       health: number | null;
+      thumbnail: string | null;
+      permalink: string | null;
       synced_at: string;
     }[] = [];
 
@@ -526,6 +541,7 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
 
       updateRows.push({
         id: result.id,
+        title: result.body.title ?? local.title ?? null,
         price: newPrice,
         previous_price: prevPrice,
         currency_id: "UYU",
@@ -534,12 +550,15 @@ async function syncCompetitorPrices(tokenRow: TokenRow): Promise<{
         sold_quantity: result.body.sold_quantity ?? null,
         status: result.body.status ?? null,
         health: result.body.health ?? null,
+        thumbnail: result.body.thumbnail ?? local.thumbnail ?? null,
+        permalink: result.body.permalink ?? local.permalink ?? null,
         synced_at: new Date().toISOString(),
       });
 
       // Evaluar reglas aplicables: globales (sku=null) + específicas para este SKU
+      const localSku = normalizeSku(local.our_sku);
       const applicableRules = allRules.filter(
-        (r) => r.sku === null || r.sku === local.our_sku
+        (r) => r.sku === null || normalizeSku(r.sku) === localSku
       );
 
       for (const rule of applicableRules) {

@@ -38,18 +38,15 @@ export default function ProjectNavbar({ user }: { user: User }) {
   }
 
   return (
-    <header className="h-16 border-b border-gray-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/85 flex items-center justify-between px-5 lg:px-7 shrink-0">
-      <div className="flex items-center gap-3 min-w-0">
-        <div className={`w-9 h-9 rounded-lg bg-linear-to-br ${activeProject.accent} text-white font-bold text-xs flex items-center justify-center shadow-sm`}>
-          {activeProject.shortName}
-        </div>
+    <header className="h-18 border-b border-[rgba(57,0,148,0.12)] bg-[rgba(255,255,255,0.88)] backdrop-blur supports-[backdrop-filter]:bg-white/78 flex items-center justify-between px-6 lg:px-8 shrink-0">
+      <div className="flex items-start gap-4 min-w-0">
         <div className="min-w-0">
-          <p className="text-[10px] text-gray-400 uppercase tracking-wider leading-none mb-1">Eurotech</p>
-          <div className="relative w-52 max-w-[52vw]">
+          <p className="text-[11px] text-[rgba(57,0,148,0.55)] uppercase tracking-[0.3em] leading-none mb-1">{activeProject.eyebrow}</p>
+          <div className="relative w-56 max-w-[52vw]">
             <select
               value={activeProject.id}
               onChange={event => handleProjectChange(event.target.value)}
-              className="w-full appearance-none rounded-md border border-gray-200 bg-gray-50 px-3 py-1.5 pr-8 text-sm font-semibold text-gray-900 outline-none transition-colors hover:border-gray-300 focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100"
+              className="w-full appearance-none rounded-2xl border border-[rgba(57,0,148,0.10)] bg-white px-4 py-2.5 pr-10 text-[1.05rem] font-semibold tracking-tight text-[var(--brand-900)] outline-none transition-colors hover:border-[rgba(57,0,148,0.24)] focus:border-[rgba(57,0,148,0.38)] focus:bg-white focus:ring-2 focus:ring-[rgba(57,0,148,0.12)] shadow-[0_12px_26px_rgba(57,0,148,0.06)]"
               aria-label="Seleccionar proyecto"
             >
               {projects.map(project => (
@@ -58,21 +55,22 @@ export default function ProjectNavbar({ user }: { user: User }) {
                 </option>
               ))}
             </select>
-            <ChevronDownIcon className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <ChevronDownIcon className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[rgba(57,0,148,0.42)]" />
           </div>
+          <p className="mt-1 text-sm text-[rgba(29,8,74,0.58)]">Vista global del panel operativo</p>
         </div>
       </div>
 
       <div className="flex items-center gap-2.5 min-w-0">
-        <div className="hidden sm:flex items-center gap-2 rounded-full border border-gray-200 bg-white px-2.5 py-1.5 min-w-0">
-          <div className="w-7 h-7 rounded-full bg-gray-100 text-gray-600 font-semibold text-xs flex items-center justify-center shrink-0">
+        <div className="hidden sm:flex items-center gap-2 rounded-full border border-[rgba(57,0,148,0.12)] bg-white px-3 py-1.5 min-w-0 shadow-[0_10px_24px_rgba(57,0,148,0.06)]">
+          <div className="w-7 h-7 rounded-full bg-[linear-gradient(135deg,#390094_0%,#6A3FB9_100%)] text-white font-semibold text-xs flex items-center justify-center shrink-0">
             {initial}
           </div>
-          <p className="text-xs text-gray-500 truncate max-w-48">{user.email}</p>
+          <p className="text-xs text-[rgba(29,8,74,0.72)] truncate max-w-48">{user.email}</p>
         </div>
         <button
           onClick={handleLogout}
-          className="h-9 w-9 inline-flex items-center justify-center rounded-md text-gray-500 hover:text-red-600 hover:bg-red-50 transition-colors"
+          className="h-9 w-9 inline-flex items-center justify-center rounded-full text-[rgba(57,0,148,0.62)] hover:text-[#390094] hover:bg-[rgba(57,0,148,0.08)] transition-colors"
           aria-label="Cerrar sesión"
         >
           <LogoutIcon className="w-4.5 h-4.5" />

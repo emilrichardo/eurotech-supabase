@@ -6,39 +6,25 @@ export const dynamic = 'force-dynamic'
 
 type ProductsTableProps = Parameters<typeof ProductsTable>[0]
 
-const PRODUCT_SELECT = `id, title, subtitle, sku, price, sale_price, catalog_price, buybox_price, buybox_seller_id, base_price, original_price, currency_id,
+const COMPETITOR_SELECT = 'id, our_sku, our_product_id, title, price, currency_id, usd_price, status, thumbnail, permalink, seller_id, seller_name, synced_at, paused'
+
+async function fetchInitialProducts(supabase: ReturnType<typeof createAdminClient>) {
+  const pageSize = 200
+  const { data, error, count } = await supabase
+    .schema('ml').from('ml_products')
+    .select(`id, title, subtitle, sku, price, sale_price, catalog_price, buybox_price, buybox_seller_id, base_price, original_price, currency_id,
  available_quantity, sold_quantity, initial_quantity,
  status, condition, listing_type_id, buying_mode,
  thumbnail, permalink, category_id, domain_id,
  catalog_product_id, parent_item_id, family_id, family_name, user_product_id, inventory_id, seller_custom_field,
  warranty, health, automatic_relist, catalog_listing,
- date_created, last_updated, synced_at, start_time, stop_time`
+ date_created, last_updated, synced_at, start_time, stop_time`, { count: 'planned' })
+    .neq('status', 'closed')
+    .neq('status', 'under_review')
+    .order('last_updated', { ascending: false })
+    .range(0, pageSize - 1)
 
-const COMPETITOR_SELECT = 'id, our_sku, our_product_id, title, price, currency_id, usd_price, status, thumbnail, permalink, seller_id, seller_name, synced_at, paused'
-
-async function fetchAllProducts(supabase: ReturnType<typeof createAdminClient>) {
-  const pageSize = 1000
-  const rows: unknown[] = []
-  let totalCount: number | null = null
-
-  for (let from = 0; ; from += pageSize) {
-    const { data, error, count } = await supabase
-      .schema('ml').from('ml_products')
-      .select(PRODUCT_SELECT, { count: from === 0 ? 'exact' : undefined })
-      .neq('status', 'closed')
-      .neq('status', 'under_review')
-      .order('last_updated', { ascending: false })
-      .range(from, from + pageSize - 1)
-
-    if (error) return { data: rows, error, count: totalCount }
-    if (from === 0) totalCount = count
-    rows.push(...(data ?? []))
-
-    if (!data || data.length < pageSize) break
-    if (totalCount !== null && rows.length >= totalCount) break
-  }
-
-  return { data: rows, error: null, count: totalCount ?? rows.length }
+  return { data: data ?? [], error, count: count ?? 0, pageSize }
 }
 
 async function fetchAllCompetitors(supabase: ReturnType<typeof createAdminClient>) {
@@ -63,11 +49,7 @@ export default async function ProductosPage() {
   const supabase = createAdminClient()
 
   const [productsResult, competitorsResult, categoriesResult, lastProductSyncResult, lastCompetitorSyncResult] = await Promise.all([
-    // List query: exclude heavy JSONB fields (pictures, shipping, descriptions, tags, attributes).
-    // Those are only needed in the detail panel and are fetched on-demand via
-    // /api/product-media/[id] when a row is clicked.
-    fetchAllProducts(supabase),
-
+    fetchInitialProducts(supabase),
     fetchAllCompetitors(supabase),
 
     supabase
@@ -152,7 +134,8 @@ export default async function ProductosPage() {
         </div>
       ) : (
         <ProductsTable
-          products={products as ProductsTableProps['products']}
+          initialProducts={products as ProductsTableProps['initialProducts']}
+          totalCount={count ?? products.length}
           competitorsBySku={competitorsBySku as ProductsTableProps['competitorsBySku']}
           categoryMap={categoryMap}
         />

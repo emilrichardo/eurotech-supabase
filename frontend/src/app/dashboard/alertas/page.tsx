@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import AlertasLayout from './AlertasLayout'
+import { skuKey } from '@/lib/sku'
 
 export const dynamic = 'force-dynamic'
 
@@ -46,11 +47,11 @@ function resolveAlertProduct(
 ) {
   const ownerProductId = alert.ml_competitor_items?.our_product_id
   if (ownerProductId && productById.has(ownerProductId)) return productById.get(ownerProductId) ?? null
-  return productBySku.get(alert.our_sku) ?? null
+  return productBySku.get(skuKey(alert.our_sku) ?? '') ?? null
 }
 
 function getAlertOwnerKey(alert: AlertRow) {
-  return alert.ml_competitor_items?.our_product_id ?? `sku:${alert.our_sku}`
+  return alert.ml_competitor_items?.our_product_id ?? skuKey(alert.our_sku) ?? `sku:${alert.our_sku}`
 }
 
 function resolveReferencePrice(
@@ -139,7 +140,8 @@ export default async function AlertasPage() {
   const productBySku = new Map<string, ProductPriceRow>()
   for (const p of (skusRes.data ?? []) as ProductPriceRow[]) {
     productById.set(p.id, p)
-    if (p.sku && !productBySku.has(p.sku)) productBySku.set(p.sku, p)
+    const key = skuKey(p.sku)
+    if (key && !productBySku.has(key)) productBySku.set(key, p)
   }
 
   // Deduplicar por publicación cuando exista our_product_id; si no, fallback a SKU.
@@ -159,11 +161,12 @@ export default async function AlertasPage() {
   })
   console.log(`[alertas] rules=${rules.length} alerts=${alerts.length}`)
   // Quedarse con el título del listing más reciente (el primero que aparezca por SKU)
-  const skuTitles = new Map<string, string>()
+  const skuTitles = new Map<string, { sku: string; title: string }>()
   for (const p of skusRes.data ?? []) {
-    if (p.sku && !skuTitles.has(p.sku)) skuTitles.set(p.sku, p.title)
+    const key = skuKey(p.sku)
+    if (key && !skuTitles.has(key) && p.sku) skuTitles.set(key, { sku: p.sku, title: p.title })
   }
-  const skus = Array.from(skuTitles.entries()).map(([sku, title]) => ({ sku, title }))
+  const skus = Array.from(skuTitles.values())
 
   const unreadCount = alerts.filter(a => !a.read_at).length
 

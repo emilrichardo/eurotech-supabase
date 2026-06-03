@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { getProjectByPath, type ProjectView } from '@/lib/projects'
 import type React from 'react'
@@ -45,13 +46,36 @@ export default function Sidebar() {
   const project = getProjectByPath(pathname)
 
   return (
-    <aside className="w-60 bg-white border-r border-gray-200 flex flex-col shrink-0">
-      <div className="px-5 py-4 border-b border-gray-100">
-        <p className="text-[10px] text-gray-400 uppercase tracking-wider">{project.eyebrow}</p>
-        <p className="mt-1 text-sm font-bold text-gray-900">{project.name}</p>
+    <aside className="w-[300px] bg-white border-r border-[rgba(57,0,148,0.10)] flex flex-col shrink-0 shadow-[1px_0_0_rgba(57,0,148,0.04)]">
+      <div className="p-4">
+        <div className="overflow-hidden rounded-[1.5rem] bg-[#0A0A0A] p-5 text-white shadow-[0_18px_40px_rgba(10,10,10,0.22)]">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <Image
+                src="/eurotech-logo.svg"
+                alt="Eurotech"
+                width={160}
+                height={28}
+                className="h-auto w-[160px] brightness-125 contrast-125 saturate-125"
+                priority
+              />
+              <p className="mt-5 text-[11px] uppercase tracking-[0.38em] text-white/58">Eurotech Monitor</p>
+            </div>
+            <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.28em] text-white/78">
+              Uruguay
+            </div>
+          </div>
+
+          <div className="mt-7">
+            <p className="text-3xl font-semibold tracking-tight text-white">Gestión interna</p>
+            <p className="mt-2 max-w-[14rem] text-sm leading-6 text-white/72">Monitoreo operativo por tienda, productos y competencia.</p>
+          </div>
+        </div>
       </div>
 
-      <nav className="flex-1 px-3 py-4 space-y-0.5">
+      <div className="mx-5 my-1 h-px bg-[rgba(57,0,148,0.08)]" />
+
+      <nav className="flex-1 px-3 py-4 space-y-1">
         {project.views.map(({ href, label, icon }) => {
           const Icon = iconMap[icon]
           const isActive = href === '/dashboard' ? pathname === href : pathname.startsWith(href)
@@ -59,21 +83,28 @@ export default function Sidebar() {
             <Link
               key={href}
               href={href}
-              className={`group relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+              className={`group relative flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-medium transition-colors ${
                 isActive
-                  ? 'bg-blue-50 text-blue-700'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                  ? 'bg-[rgba(57,0,148,0.08)] text-[var(--brand-800)] shadow-[inset_0_0_0_1px_rgba(57,0,148,0.08)]'
+                  : 'text-[rgba(29,8,74,0.70)] hover:bg-[rgba(57,0,148,0.04)] hover:text-[var(--brand-900)]'
               }`}
             >
               {isActive && (
-                <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-blue-600" />
+                <span className="absolute left-2 top-2.5 bottom-2.5 w-1 rounded-full bg-[linear-gradient(180deg,#390094_0%,#6A3FB9_100%)]" />
               )}
-              <Icon className={`w-4.5 h-4.5 shrink-0 ${isActive ? 'text-blue-600' : 'text-gray-400 group-hover:text-gray-600'}`} />
+              <Icon className={`w-4.5 h-4.5 shrink-0 ${isActive ? 'text-[var(--brand-700)]' : 'text-[rgba(29,8,74,0.35)] group-hover:text-[rgba(29,8,74,0.56)]'}`} />
               <span>{label}</span>
             </Link>
           )
         })}
       </nav>
+
+      <div className="px-5 pb-5 pt-3">
+        <div className="rounded-2xl border border-[rgba(57,0,148,0.08)] bg-[rgba(57,0,148,0.04)] px-4 py-3">
+          <p className="text-[10px] uppercase tracking-[0.28em] text-[rgba(57,0,148,0.62)]">Marca</p>
+          <p className="mt-1 text-sm font-medium text-[var(--brand-900)]">{project.name}</p>
+        </div>
+      </div>
     </aside>
   )
 }

@@ -38,7 +38,7 @@ export async function GET(
     admin
       .schema('ml').from('ml_products')
       .select('id, title, sku, price, sale_price, catalog_price, buybox_price, status, thumbnail, permalink, currency_id, available_quantity, pictures')
-      .eq('sku', ownerLookup)
+      .ilike('sku', ownerLookup)
       .eq('status', 'active')
       .order('synced_at', { ascending: false })
       .limit(1)
@@ -46,7 +46,7 @@ export async function GET(
     admin
       .schema('ml').from('ml_products')
       .select('id, title, sku, price, sale_price, catalog_price, buybox_price, status, thumbnail, permalink, currency_id, available_quantity, pictures')
-      .eq('sku', ownerLookup)
+      .ilike('sku', ownerLookup)
       .order('synced_at', { ascending: false })
       .limit(1)
       .maybeSingle(),

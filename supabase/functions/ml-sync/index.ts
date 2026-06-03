@@ -157,22 +157,26 @@ async function fetchAllItemIds(token: string, userId: number): Promise<string[]>
   const statuses = ["active", "paused", "closed", "under_review", "inactive"];
 
   for (const status of statuses) {
-    let data = await mlFetch<SearchResult>(
-      `/users/${userId}/items/search?search_type=scan&limit=${limit}&status=${status}`,
-      token
-    );
-    for (const id of data.results) allIds.add(id);
-    const total = data.paging.total;
-    console.log(`[${status}] IDs obtenidos: ${allIds.size} / ${total}`);
-
-    while (data.scroll_id && data.results.length > 0) {
-      data = await mlFetch<SearchResult>(
-        `/users/${userId}/items/search?search_type=scan&limit=${limit}&status=${status}&scroll_id=${encodeURIComponent(data.scroll_id)}`,
+    try {
+      let data = await mlFetch<SearchResult>(
+        `/users/${userId}/items/search?search_type=scan&limit=${limit}&status=${status}`,
         token
       );
-      if (data.results.length === 0) break;
       for (const id of data.results) allIds.add(id);
+      const total = data.paging.total;
       console.log(`[${status}] IDs obtenidos: ${allIds.size} / ${total}`);
+
+      while (data.scroll_id && data.results.length > 0) {
+        data = await mlFetch<SearchResult>(
+          `/users/${userId}/items/search?search_type=scan&limit=${limit}&status=${status}&scroll_id=${encodeURIComponent(data.scroll_id)}`,
+          token
+        );
+        if (data.results.length === 0) break;
+        for (const id of data.results) allIds.add(id);
+        console.log(`[${status}] IDs obtenidos: ${allIds.size} / ${total}`);
+      }
+    } catch (err) {
+      console.warn(`[${status}] no se pudieron obtener IDs:`, err instanceof Error ? err.message : err);
     }
   }
 
@@ -272,6 +276,12 @@ interface MLDescription {
   date_created?: string | null;
   last_updated?: string | null;
   snapshot?: unknown;
+}
+
+interface MLBatchItemResult {
+  id: string;
+  code: number;
+  body: MLItem | null;
 }
 
 function cleanSku(value: unknown): string | null {
@@ -412,6 +422,18 @@ async function fetchItemDescription(id: string, token: string): Promise<MLDescri
   }
 }
 
+async function fetchItemsBatch(ids: string[], token: string): Promise<MLBatchItemResult[]> {
+  const res = await fetch(
+    `${ML_API}/items?ids=${ids.join(",")}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`ML API /items batch → ${res.status}: ${err}`);
+  }
+  return res.json() as Promise<MLBatchItemResult[]>;
+}
+
 // /items/{id}/prices exposes promotional / deal pricing that the items endpoint
 // omits for the seller's own items. We pick the lowest amount among entries
 // flagged as promotional (type contains "promotion" or regular_amount present).
@@ -428,10 +450,6 @@ interface MLPricesResponse {
   id?: string;
   prices?: MLPriceEntry[];
 }
-
-let debugPricesCallCount = 0;
-let debugPromosFoundCount = 0;
-let debugDescriptionsFoundCount = 0;
 
 async function fetchItemPrices(id: string, token: string): Promise<MLPricesResponse | null> {
   try {
@@ -475,31 +493,44 @@ async function fetchAndUpsertItems(
   let upserted = 0;
   const CONCURRENCY = 20;
 
-  // For each item we fetch /items/{id}, /items/{id}/description and
-  // /items/{id}/prices in parallel.
-  // The prices endpoint surfaces real promotional prices that don't appear in
-  // the items payload for the seller's own listings.
+  // Fetch the item payload in batches to reduce round-trips.
+  // Promos are still resolved per item when the main payload doesn't include sale_price.
   for (const batch of chunk(ids, CONCURRENCY)) {
-    const results = await Promise.all(
-      batch.map(async (id) => {
-        const [item, pricesResp, description] = await Promise.all([
-          fetchItem(id, token),
-          fetchItemPrices(id, token),
-          fetchItemDescription(id, token),
-        ]);
-        debugPricesCallCount++;
-        if (!item) return null;
-        if (description?.plain_text || description?.text) debugDescriptionsFoundCount++;
-        const row = mapItemToRow(item, description);
-        const promoPrice = extractPromoAmount(pricesResp);
-        if (promoPrice !== null) {
-          row.sale_price = promoPrice;
-          debugPromosFoundCount++;
-        }
+    let batchResults: MLBatchItemResult[];
+    try {
+      batchResults = await fetchItemsBatch(batch, token);
+    } catch (err) {
+      console.error(`Error fetching batch ${batch.join(",")}: ${err instanceof Error ? err.message : err}`);
+      continue;
+    }
 
-        return row;
-      })
-    );
+    const resultsById = new Map(batchResults.map((entry) => [entry.id, entry]));
+    const promoCandidates = batch.filter((id) => {
+      const body = resultsById.get(id)?.body;
+      return body && body.sale_price?.amount == null;
+    });
+
+    const promoPrices = new Map<string, number | null>();
+    const promoBatchSize = 8;
+    for (const promoBatch of chunk(promoCandidates, promoBatchSize)) {
+      await Promise.all(promoBatch.map(async (id) => {
+        const pricesResp = await fetchItemPrices(id, token);
+        const promoPrice = extractPromoAmount(pricesResp);
+        promoPrices.set(id, promoPrice);
+      }))
+    }
+
+    const results = batch.map((id) => {
+      const item = resultsById.get(id)?.body ?? null;
+      if (!item) return null;
+
+      const row = mapItemToRow(item, null);
+      const salePrice = item.sale_price?.amount ?? promoPrices.get(id) ?? null;
+      if (salePrice !== null) {
+        row.sale_price = salePrice;
+      }
+      return row;
+    });
     const rows = results.filter((r): r is ReturnType<typeof mapItemToRow> => r !== null);
 
     if (rows.length === 0) continue;
@@ -536,23 +567,12 @@ Deno.serve(async (req) => {
     const tokenRow = await getValidToken();
     const ids = await fetchAllItemIds(tokenRow.access_token, tokenRow.user_id);
     console.log(`Total productos: ${ids.length} (user_id: ${tokenRow.user_id})`);
-
-    debugPricesCallCount = 0;
-    debugPromosFoundCount = 0;
-    debugDescriptionsFoundCount = 0;
     const upserted = await fetchAndUpsertItems(ids, tokenRow.access_token);
-
-    console.log(
-      `[ml-sync diag] /prices calls=${debugPricesCallCount} promos_found=${debugPromosFoundCount} descriptions_found=${debugDescriptionsFoundCount}`
-    );
 
     const result = {
       success: true,
       total_ids: ids.length,
       upserted,
-      prices_calls: debugPricesCallCount,
-      promos_found: debugPromosFoundCount,
-      descriptions_found: debugDescriptionsFoundCount,
       synced_at: new Date().toISOString(),
     };
 
