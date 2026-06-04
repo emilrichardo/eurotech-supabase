@@ -15,11 +15,11 @@ const ibmPlexMono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Eurotech Monitor",
-    template: "%s · Eurotech Monitor",
+    default: "Eurotech Gestor",
+    template: "%s · Eurotech Gestor",
   },
-  description: "Panel de monitoreo de productos, alertas y competencia de Eurotech.",
-  applicationName: "Eurotech Monitor",
+  description: "Plataforma interna de Eurotech para tiendas, productos y sincronizaciones.",
+  applicationName: "Eurotech Gestor",
 };
 
 export default function RootLayout({

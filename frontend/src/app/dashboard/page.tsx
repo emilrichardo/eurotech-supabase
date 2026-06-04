@@ -47,8 +47,8 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Bienvenido, {user?.email}</p>
+        <h1 className="text-2xl font-bold text-[var(--brand-900)]">Dashboard global</h1>
+        <p className="text-sm text-[rgba(42,31,29,0.62)] mt-0.5">Bienvenido, {user?.email}</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -73,7 +73,7 @@ export default async function DashboardPage() {
       </div>
 
       <div>
-        <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Última sincronización</h2>
+        <h2 className="text-xs font-semibold text-[rgba(42,31,29,0.55)] uppercase tracking-wider mb-3">Última sincronización</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <SyncCard
             title="Productos propios"
@@ -94,34 +94,34 @@ export default async function DashboardPage() {
 }
 
 function StatCard({ label, value, description, tone }: { label: string; value: string; description: string; tone: 'neutral' | 'green' | 'blue' }) {
-  const valueColor = { neutral: 'text-gray-900', green: 'text-green-600', blue: 'text-blue-600' }[tone]
-  const dotColor = { neutral: 'bg-gray-300', green: 'bg-green-400', blue: 'bg-blue-400' }[tone]
+  const valueColor = { neutral: 'text-[var(--brand-900)]', green: 'text-[var(--brand-800)]', blue: 'text-[var(--brand-700)]' }[tone]
+  const dotColor = { neutral: 'bg-[rgba(42,31,29,0.30)]', green: 'bg-[rgba(185,11,8,0.45)]', blue: 'bg-[rgba(185,11,8,0.68)]' }[tone]
   return (
-    <div className="bg-white rounded-xl p-5 border border-gray-100 hover:border-gray-200 hover:shadow-sm transition-all">
+    <div className="bg-white rounded-xl p-5 border border-[rgba(185,11,8,0.12)] hover:border-[rgba(185,11,8,0.20)] hover:shadow-sm transition-all">
       <div className="flex items-center gap-2 mb-3">
         <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
-        <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">{label}</p>
+        <p className="text-xs font-medium text-[rgba(42,31,29,0.55)] uppercase tracking-wider">{label}</p>
       </div>
       <p className={`text-3xl font-bold ${valueColor} leading-none`}>{value}</p>
-      <p className="text-xs text-gray-400 mt-2">{description}</p>
+      <p className="text-xs text-[rgba(42,31,29,0.42)] mt-2">{description}</p>
     </div>
   )
 }
 
 function SyncCard({ title, description, lastSync, status }: { title: string; description: string; lastSync: string; status: 'fresh' | 'stale' | 'never' }) {
-  const dotColor = { fresh: 'bg-green-400', stale: 'bg-amber-400', never: 'bg-gray-300' }[status]
+  const dotColor = { fresh: 'bg-[rgba(185,11,8,0.55)]', stale: 'bg-[rgba(185,11,8,0.28)]', never: 'bg-[rgba(42,31,29,0.30)]' }[status]
   const dotAnim = status === 'fresh' ? 'animate-pulse' : ''
   return (
-    <div className="bg-white rounded-xl p-4 border border-gray-100 flex items-center gap-3">
+    <div className="bg-white rounded-xl p-4 border border-[rgba(185,11,8,0.12)] flex items-center gap-3">
       <div className="relative shrink-0">
         <span className={`block w-2.5 h-2.5 rounded-full ${dotColor} ${dotAnim}`} />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-gray-800">{title}</p>
-        <p className="text-xs text-gray-400 mt-0.5">{description}</p>
+        <p className="text-sm font-medium text-[var(--brand-900)]">{title}</p>
+        <p className="text-xs text-[rgba(42,31,29,0.42)] mt-0.5">{description}</p>
       </div>
       <div className="text-right shrink-0">
-        <p className="text-xs text-gray-600 font-medium">{lastSync}</p>
+        <p className="text-xs text-[rgba(42,31,29,0.65)] font-medium">{lastSync}</p>
       </div>
     </div>
   )

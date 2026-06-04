@@ -52,39 +52,39 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen px-4 py-6 lg:p-8">
-      <div className="mx-auto grid min-h-[calc(100vh-3rem)] w-full max-w-6xl overflow-hidden rounded-[2rem] border border-[rgba(57,0,148,0.12)] bg-[rgba(255,255,255,0.72)] shadow-[0_30px_90px_rgba(57,0,148,0.12)] backdrop-blur-xl lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="relative overflow-hidden bg-[linear-gradient(160deg,#1D084A_0%,#390094_46%,#6A3FB9_100%)] px-8 py-10 text-white lg:px-12 lg:py-14">
+      <div className="mx-auto grid min-h-[calc(100vh-3rem)] w-full max-w-6xl overflow-hidden rounded-[1.75rem] border border-[rgba(185,11,8,0.12)] bg-[rgba(255,255,255,0.7)] shadow-[0_32px_120px_rgba(92,18,16,0.14)] backdrop-blur-xl lg:grid-cols-[1.1fr_0.9fr]">
+        <div className="relative overflow-hidden bg-[linear-gradient(160deg,rgba(0,0,0,1)_40%,rgba(123,10,8,1))] px-6 py-8 text-white sm:px-8 lg:px-12 lg:py-14">
           <div className="absolute inset-0 opacity-35">
-            <div className="absolute -left-16 top-8 h-56 w-56 rounded-full bg-white/20 blur-3xl" />
-            <div className="absolute right-0 top-28 h-72 w-72 rounded-full bg-[#A184CF]/30 blur-3xl" />
-            <div className="absolute -bottom-8 left-1/3 h-64 w-64 rounded-full bg-[#6A3FB9]/35 blur-3xl" />
+            <div className="absolute -left-16 top-8 h-56 w-56 rounded-full bg-white/12 blur-3xl" />
+            <div className="absolute right-0 top-28 h-72 w-72 rounded-full bg-[#B31D23]/24 blur-3xl" />
+            <div className="absolute -bottom-8 left-1/3 h-64 w-64 rounded-full bg-[#7b0a08]/30 blur-3xl" />
           </div>
 
           <div className="relative flex h-full flex-col justify-between">
-            <div className="space-y-8">
+            <div className="space-y-6 sm:space-y-8">
               <div className="flex items-center gap-3">
-                <BrandLogo compact className="shrink-0" />
+                <BrandLogo className="shrink-0" />
                 <div>
-                  <p className="text-[10px] uppercase tracking-[0.3em] text-white/70">Eurotech</p>
-                  <p className="text-xs text-white/90">Monitor</p>
+                  <p className="text-[10px] uppercase tracking-[0.3em] text-white/70">Plataforma interna</p>
+                  <p className="text-xs text-white/90">Operacion de catalogo</p>
                 </div>
               </div>
-              <div className="max-w-xl space-y-5">
-                <p className="text-[11px] uppercase tracking-[0.32em] text-white/70">Eurotech Monitor</p>
-                <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">
-                  Un panel más claro para ver productos, alertas y competencia.
+              <div className="max-w-xl space-y-4 sm:space-y-5">
+                <p className="text-[11px] uppercase tracking-[0.32em] text-white/70">Eurotech Gestor</p>
+                <h1 className="text-3xl font-semibold tracking-tight sm:text-5xl">
+                  Operacion interna por tienda con identidad Eurotech.
                 </h1>
                 <p className="max-w-lg text-sm leading-6 text-white/75 sm:text-base">
-                  Una identidad más consistente con Eurotech, con un acceso visual más limpio y una jerarquía fuerte para la operación diaria.
+                  Administra tiendas, productos y sincronizaciones desde una interfaz interna unificada.
                 </p>
               </div>
             </div>
 
-            <div className="grid gap-3 pt-12 sm:grid-cols-3">
+            <div className="hidden gap-3 pt-12 sm:grid sm:grid-cols-3">
               {[
-                ['Productos', 'Carga más rápida y progresiva'],
-                ['Alertas', 'Menos fricción visual'],
-                ['Sync', 'Más estabilidad y velocidad'],
+                ['Uruguay', 'Flujo interno por tienda'],
+                ['Argentina', 'Acceso según perfil'],
+                ['Sync', 'Seguimiento de sincronización'],
               ].map(([title, description]) => (
                 <div key={title} className="rounded-2xl border border-white/15 bg-white/10 p-4 backdrop-blur-sm">
                   <p className="text-sm font-semibold text-white">{title}</p>
@@ -97,45 +97,45 @@ export default function LoginPage() {
 
         <div className="flex items-center justify-center px-6 py-10 lg:px-10">
           <div className="w-full max-w-md">
-            <div className="rounded-[1.75rem] border border-[rgba(57,0,148,0.12)] bg-white/90 p-8 shadow-[0_20px_60px_rgba(57,0,148,0.09)]">
+            <div className="rounded-[1.75rem] border border-[rgba(185,11,8,0.12)] bg-white/90 p-8 shadow-[0_20px_60px_rgba(92,18,16,0.09)]">
               <div className="mb-8 space-y-4">
                 <div className="flex items-center justify-between gap-3">
-                  <div className="rounded-full border border-[rgba(57,0,148,0.12)] bg-[rgba(57,0,148,0.05)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.28em] text-[var(--brand-800)]">
+                  <div className="rounded-full border border-[rgba(185,11,8,0.12)] bg-[rgba(185,11,8,0.05)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.28em] text-[var(--brand-800)]">
                     Acceso seguro
                   </div>
-                  <Image src="/eurotech-logo.svg" alt="Eurotech" width={136} height={24} className="h-auto w-[136px]" />
+                  <Image src="/eurotech-logo.svg" alt="Eurotech" width={105} height={28} className="h-auto w-[105px]" />
                 </div>
                 <div>
                   <h2 className="text-2xl font-semibold tracking-tight text-[var(--brand-900)]">Iniciar sesión</h2>
-                  <p className="mt-1 text-sm text-[rgba(29,8,74,0.62)]">Ingresá para revisar productos, alertas y sincronización.</p>
+                  <p className="mt-1 text-sm text-[rgba(42,31,29,0.62)]">Accede con tu cuenta interna para administrar la tienda asignada.</p>
                 </div>
               </div>
 
               <form onSubmit={handleLogin} className="space-y-5">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-[rgba(29,8,74,0.75)]">
-                    Email
+                    Correo electronico
                   </label>
                   <input
                     type="email"
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="w-full rounded-xl border border-[rgba(57,0,148,0.14)] bg-white px-4 py-3 text-sm text-[var(--brand-900)] placeholder:text-[rgba(29,8,74,0.35)] outline-none transition focus:border-[rgba(57,0,148,0.4)] focus:ring-4 focus:ring-[rgba(57,0,148,0.1)]"
+                    className="w-full rounded-xl border border-[rgba(185,11,8,0.14)] bg-white px-4 py-3 text-sm text-[var(--brand-900)] placeholder:text-[rgba(42,31,29,0.35)] outline-none transition focus:border-[rgba(185,11,8,0.4)] focus:ring-4 focus:ring-[rgba(185,11,8,0.1)]"
                     placeholder="tu@email.com"
                   />
                 </div>
 
                 <div>
                   <label className="mb-1 block text-sm font-medium text-[rgba(29,8,74,0.75)]">
-                    Contraseña
+                    Contrasena
                   </label>
                   <input
                     type="password"
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full rounded-xl border border-[rgba(57,0,148,0.14)] bg-white px-4 py-3 text-sm text-[var(--brand-900)] placeholder:text-[rgba(29,8,74,0.35)] outline-none transition focus:border-[rgba(57,0,148,0.4)] focus:ring-4 focus:ring-[rgba(57,0,148,0.1)]"
+                    className="w-full rounded-xl border border-[rgba(185,11,8,0.14)] bg-white px-4 py-3 text-sm text-[var(--brand-900)] placeholder:text-[rgba(42,31,29,0.35)] outline-none transition focus:border-[rgba(185,11,8,0.4)] focus:ring-4 focus:ring-[rgba(185,11,8,0.1)]"
                     placeholder="••••••••"
                   />
                 </div>
@@ -149,7 +149,7 @@ export default function LoginPage() {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full rounded-xl bg-[linear-gradient(135deg,#390094_0%,#6A3FB9_100%)] px-4 py-3 text-sm font-semibold text-white shadow-[0_14px_30px_rgba(57,0,148,0.22)] transition hover:brightness-105 disabled:opacity-50"
+                  className="w-full rounded-xl bg-[linear-gradient(135deg,#B90B08_0%,#D93A34_100%)] px-4 py-3 text-sm font-semibold text-white shadow-[0_14px_30px_rgba(185,11,8,0.22)] transition hover:brightness-105 disabled:opacity-50"
                 >
                   {loading ? 'Ingresando...' : 'Ingresar'}
                 </button>

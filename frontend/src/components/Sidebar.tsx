@@ -1,9 +1,9 @@
 'use client'
 
 import Link from 'next/link'
-import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { getProjectByPath, type ProjectView } from '@/lib/projects'
+import BrandLogo from '@/components/BrandLogo'
 import type React from 'react'
 
 type IconProps = { className?: string }
@@ -46,36 +46,29 @@ export default function Sidebar() {
   const project = getProjectByPath(pathname)
 
   return (
-    <aside className="w-[300px] bg-white border-r border-[rgba(57,0,148,0.10)] flex flex-col shrink-0 shadow-[1px_0_0_rgba(57,0,148,0.04)]">
+    <aside className="w-full bg-white border-b border-[rgba(185,11,8,0.10)] flex flex-col shrink-0 shadow-[0_1px_0_rgba(185,11,8,0.04)] lg:w-[300px] lg:border-b-0 lg:border-r lg:shadow-[1px_0_0_rgba(185,11,8,0.04)]">
       <div className="p-4">
-        <div className="overflow-hidden rounded-[1.5rem] bg-[#0A0A0A] p-5 text-white shadow-[0_18px_40px_rgba(10,10,10,0.22)]">
+        <div className="overflow-hidden rounded-[1.5rem] bg-[#000000] p-4 text-white shadow-[0_18px_40px_rgba(10,10,10,0.22)] lg:p-5">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <Image
-                src="/eurotech-logo.svg"
-                alt="Eurotech"
-                width={160}
-                height={28}
-                className="h-auto w-[160px] brightness-125 contrast-125 saturate-125"
-                priority
-              />
-              <p className="mt-5 text-[11px] uppercase tracking-[0.38em] text-white/58">Eurotech Monitor</p>
+              <BrandLogo />
+              <p className="mt-4 text-[11px] uppercase tracking-[0.38em] text-white/58 lg:mt-5">Eurotech Gestor</p>
             </div>
             <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.28em] text-white/78">
               Uruguay
             </div>
           </div>
 
-          <div className="mt-7">
-            <p className="text-3xl font-semibold tracking-tight text-white">Gestión interna</p>
-            <p className="mt-2 max-w-[14rem] text-sm leading-6 text-white/72">Monitoreo operativo por tienda, productos y competencia.</p>
+          <div className="mt-6 lg:mt-7">
+            <p className="text-3xl font-semibold tracking-tight text-white">Super-admin</p>
+            <p className="mt-2 max-w-[14rem] text-sm leading-6 text-white/72">Vista consolidada y gestion de accesos.</p>
           </div>
         </div>
       </div>
 
-      <div className="mx-5 my-1 h-px bg-[rgba(57,0,148,0.08)]" />
+      <div className="mx-5 my-1 h-px bg-[rgba(185,11,8,0.08)]" />
 
-      <nav className="flex-1 px-3 py-4 space-y-1">
+      <nav className="flex-1 px-3 py-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-1 lg:gap-0 lg:space-y-1">
         {project.views.map(({ href, label, icon }) => {
           const Icon = iconMap[icon]
           const isActive = href === '/dashboard' ? pathname === href : pathname.startsWith(href)
@@ -83,25 +76,25 @@ export default function Sidebar() {
             <Link
               key={href}
               href={href}
-              className={`group relative flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-medium transition-colors ${
+              className={`group relative flex items-center gap-3 px-3 py-3 rounded-2xl text-sm font-medium transition-colors lg:px-4 ${
                 isActive
-                  ? 'bg-[rgba(57,0,148,0.08)] text-[var(--brand-800)] shadow-[inset_0_0_0_1px_rgba(57,0,148,0.08)]'
-                  : 'text-[rgba(29,8,74,0.70)] hover:bg-[rgba(57,0,148,0.04)] hover:text-[var(--brand-900)]'
+                  ? 'bg-[rgba(185,11,8,0.08)] text-[var(--brand-800)] shadow-[inset_0_0_0_1px_rgba(185,11,8,0.08)]'
+                  : 'text-[rgba(42,31,29,0.70)] hover:bg-[rgba(185,11,8,0.04)] hover:text-[var(--brand-900)]'
               }`}
             >
               {isActive && (
-                <span className="absolute left-2 top-2.5 bottom-2.5 w-1 rounded-full bg-[linear-gradient(180deg,#390094_0%,#6A3FB9_100%)]" />
+                <span className="absolute left-2 top-2.5 bottom-2.5 w-1 rounded-full bg-[linear-gradient(180deg,#B90B08_0%,#D93A34_100%)]" />
               )}
-              <Icon className={`w-4.5 h-4.5 shrink-0 ${isActive ? 'text-[var(--brand-700)]' : 'text-[rgba(29,8,74,0.35)] group-hover:text-[rgba(29,8,74,0.56)]'}`} />
-              <span>{label}</span>
+              <Icon className={`w-4.5 h-4.5 shrink-0 ${isActive ? 'text-[var(--brand-700)]' : 'text-[rgba(42,31,29,0.35)] group-hover:text-[rgba(42,31,29,0.56)]'}`} />
+              <span className="truncate">{label}</span>
             </Link>
           )
         })}
       </nav>
 
       <div className="px-5 pb-5 pt-3">
-        <div className="rounded-2xl border border-[rgba(57,0,148,0.08)] bg-[rgba(57,0,148,0.04)] px-4 py-3">
-          <p className="text-[10px] uppercase tracking-[0.28em] text-[rgba(57,0,148,0.62)]">Marca</p>
+        <div className="rounded-2xl border border-[rgba(185,11,8,0.08)] bg-[rgba(185,11,8,0.04)] px-4 py-3">
+          <p className="text-[10px] uppercase tracking-[0.28em] text-[rgba(185,11,8,0.62)]">Marca</p>
           <p className="mt-1 text-sm font-medium text-[var(--brand-900)]">{project.name}</p>
         </div>
       </div>
