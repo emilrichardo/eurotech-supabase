@@ -1215,12 +1215,6 @@ export default function ProductsTable({
         </div>
       </div>
 
-      {isLoadingMore && (
-        <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
-          Mostrando una primera carga rápida. El resto de los productos sigue cargando en segundo plano.
-        </div>
-      )}
-
       {filteredProducts.length === 0 ? (
         <EmptyProductsState />
       ) : (
