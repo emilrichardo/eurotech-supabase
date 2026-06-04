@@ -19,9 +19,9 @@ export type ProjectConfig = {
 export const projects: ProjectConfig[] = [
   {
     id: 'ml-monitor',
-    name: 'ML Monitor',
-    shortName: 'ML',
-    eyebrow: 'MercadoLibre',
+    name: 'Eurotech Monitor',
+    shortName: 'EM',
+    eyebrow: 'Eurotech',
     basePath: '/dashboard',
     accent: 'from-blue-500 to-cyan-500',
     views: [

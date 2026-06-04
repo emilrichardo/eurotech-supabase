@@ -70,7 +70,7 @@ export default function LoginPage() {
                 </div>
               </div>
               <div className="max-w-xl space-y-4 sm:space-y-5">
-                <p className="text-[11px] uppercase tracking-[0.32em] text-white/70">Eurotech Gestor</p>
+                <p className="text-[11px] uppercase tracking-[0.32em] text-white/70">Eurotech Monitor</p>
                 <h1 className="text-3xl font-semibold tracking-tight sm:text-5xl">
                   Operacion interna por tienda con identidad Eurotech.
                 </h1>
