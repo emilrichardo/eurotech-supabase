@@ -362,6 +362,26 @@ type ViewMode = 'tabla' | 'listado' | 'grid'
 type CompetitorFilter = 'all' | 'with' | 'without'
 type GroupMode = 'none' | 'related'
 type PublicationFilter = 'all' | 'traditional' | 'catalog'
+type CompetitorOwnerInput = { id: string; sku: string | null } | Competitor
+
+function getCompetitorOwnerKey(input: CompetitorOwnerInput) {
+  if ('our_product_id' in input && input.our_product_id) return `product:${input.our_product_id}`
+  if ('our_sku' in input) return skuKey(input.our_sku) ?? `sku:${input.id}`
+  if ('sku' in input) return skuKey(input.sku) ?? `sku:${input.id}`
+  return `sku:${(input as { id: string }).id}`
+}
+
+function indexCompetitorsByOwner(source: Record<string, Competitor[]>) {
+  const indexed: Record<string, Competitor[]> = {}
+  for (const list of Object.values(source)) {
+    for (const competitor of list) {
+      const ownerKey = getCompetitorOwnerKey(competitor)
+      if (!indexed[ownerKey]) indexed[ownerKey] = []
+      indexed[ownerKey].push(competitor)
+    }
+  }
+  return indexed
+}
 
 type RelatedGroup = {
   key: string
@@ -507,18 +527,6 @@ export default function ProductsTable({
 }) {
   const PAGE_SIZE = 50
 
-  function indexCompetitorsByOwner(source: Record<string, Competitor[]>) {
-    const indexed: Record<string, Competitor[]> = {}
-    for (const list of Object.values(source)) {
-      for (const competitor of list) {
-        const ownerKey = getCompetitorOwnerKey(competitor)
-        if (!indexed[ownerKey]) indexed[ownerKey] = []
-        indexed[ownerKey].push(competitor)
-      }
-    }
-    return indexed
-  }
-
   const [products, setProducts] = useState<Product[]>(initialProducts)
   const [isLoadingMore, setIsLoadingMore] = useState(initialProducts.length < totalCount)
   const [selected, setSelected] = useState<Product | null>(null)
@@ -630,13 +638,6 @@ export default function ProductsTable({
   const [rivalSearchError, setRivalSearchError] = useState<string | null>(null)
   const [addingSuggestionKey, setAddingSuggestionKey] = useState<string | null>(null)
   const [favoriteProductIds, setFavoriteProductIds] = useState<string[]>([])
-
-  const getCompetitorOwnerKey = useCallback((input: { id: string; sku: string | null } | Competitor) => {
-    if ('our_product_id' in input && input.our_product_id) return `product:${input.our_product_id}`
-    if ('our_sku' in input) return skuKey(input.our_sku) ?? `sku:${input.id}`
-    if ('sku' in input) return skuKey(input.sku) ?? `sku:${input.id}`
-    return `sku:${(input as { id: string }).id}`
-  }, [])
 
   const getCompetitorsForProduct = useCallback((product: Product) => {
     const productScoped = localCompetitors[`product:${product.id}`] ?? []
