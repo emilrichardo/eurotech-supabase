@@ -263,11 +263,10 @@ export async function POST(req: NextRequest) {
     mlData = await fetchFromCatalog(catalogId, tokenRow.access_token, tokenRow.user_id as number | null)
     resolvedId = catalogId
 
-    // Some MercadoLibre product pages expose a wid= item in the hash. If the
-    // catalog endpoint is blocked or unavailable, fall back to that concrete item.
-    if (!mlData && fallbackItemId) {
-      mlData = buildFallbackItemData(fallbackItemId, itemIdOrUrl)
-      resolvedId = fallbackItemId
+    // If MercadoLibre blocks the catalog lookup, keep the catalog ID and save
+    // a minimal record so the competitor can still be linked.
+    if (!mlData) {
+      mlData = buildFallbackItemData(catalogId, itemIdOrUrl)
     }
   } else if (itemId) {
     // Direct item: try /items endpoint (only works for our own items)
