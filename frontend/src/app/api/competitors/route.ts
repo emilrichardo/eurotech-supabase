@@ -10,10 +10,15 @@ const ML_API = 'https://api.mercadolibre.com'
  * Returns { catalogId, itemId } where catalogId is preferred for competitor tracking
  * (catalog items give price via /products endpoint; direct items may be 403).
  */
-function parseInput(input: string): { catalogId: string | null; itemId: string | null } {
+function parseInput(input: string): {
+  catalogId: string | null
+  itemId: string | null
+  fallbackItemId: string | null
+} {
   const trimmed = input.trim()
   let catalogId: string | null = null
   let itemId: string | null = null
+  let fallbackItemId: string | null = null
 
   try {
     const url = new URL(trimmed)
@@ -26,7 +31,10 @@ function parseInput(input: string): { catalogId: string | null; itemId: string |
 
     // wid= param in fragment (winning item ID from search results)
     const widMatch = url.hash.match(/[?&]wid=(ML[A-Z]+\d+)/i)
-    if (widMatch && !catalogId) itemId = widMatch[1].toUpperCase()
+    if (widMatch) {
+      fallbackItemId = widMatch[1].toUpperCase()
+      if (!catalogId) itemId = fallbackItemId
+    }
 
     // Article URL: /MLU-123456789- in pathname
     const articleMatch = url.pathname.match(/\/(ML[A-Z]+)-?(\d+)/i)
@@ -43,7 +51,7 @@ function parseInput(input: string): { catalogId: string | null; itemId: string |
     if (match) itemId = match[0].toUpperCase()
   }
 
-  return { catalogId, itemId }
+  return { catalogId, itemId, fallbackItemId }
 }
 
 async function fetchSellerName(sellerId: number, accessToken: string): Promise<string | null> {
@@ -146,7 +154,7 @@ async function fetchFromItem(
 export async function POST(req: NextRequest) {
   const { itemIdOrUrl, ourSku, ourProductId, linkMode } = await req.json()
 
-  const { catalogId, itemId } = parseInput(itemIdOrUrl)
+  const { catalogId, itemId, fallbackItemId } = parseInput(itemIdOrUrl)
   if (!catalogId && !itemId) {
     return NextResponse.json({ error: 'URL o ID de producto inválido' }, { status: 400 })
   }
@@ -214,6 +222,16 @@ export async function POST(req: NextRequest) {
     // Catalog URL: use /products endpoint (works for competitor items)
     mlData = await fetchFromCatalog(catalogId, tokenRow.access_token, tokenRow.user_id as number | null)
     resolvedId = catalogId
+
+    // Some MercadoLibre product pages expose a wid= item in the hash. If the
+    // catalog endpoint is blocked or unavailable, fall back to that concrete item.
+    if (!mlData && fallbackItemId) {
+      const fallbackData = await fetchFromItem(fallbackItemId, tokenRow.access_token)
+      if (fallbackData) {
+        mlData = fallbackData
+        resolvedId = fallbackItemId
+      }
+    }
   } else if (itemId) {
     // Direct item: try /items endpoint (only works for our own items)
     mlData = await fetchFromItem(itemId, tokenRow.access_token)
