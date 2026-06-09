@@ -72,6 +72,23 @@ function titleFromInput(input: string): string | null {
   }
 }
 
+function permalinkFromInput(input: string, resolvedId: string): string {
+  try {
+    const url = new URL(input.trim())
+    if (/\/(?:p|up)\/(ML[A-Z]+\d+)/i.test(url.pathname)) {
+      return `${url.origin}${url.pathname}`
+    }
+  } catch {
+    // Not a URL, fall through to normalized permalink.
+  }
+
+  if (/^ML[A-Z]{2,}\d+$/i.test(resolvedId)) {
+    return `https://www.mercadolibre.com.uy/up/${resolvedId}`
+  }
+
+  return `https://www.mercadolibre.com.uy/p/${resolvedId}`
+}
+
 function buildFallbackItemData(itemId: string, input: string): Record<string, unknown> {
   const title = titleFromInput(input)
   return {
@@ -86,7 +103,7 @@ function buildFallbackItemData(itemId: string, input: string): Record<string, un
     condition: null,
     listing_type_id: null,
     category_id: null,
-    permalink: `https://www.mercadolibre.com.uy/${itemId}`,
+    permalink: permalinkFromInput(input, itemId),
     thumbnail: null,
     seller_id: null,
     seller_name: null,
@@ -308,10 +325,6 @@ export async function POST(req: NextRequest) {
     (!resolvedOwnProductId && resolvedOwnSku && normalizeSku(existing.our_sku) === normalizeSku(resolvedOwnSku) && !existing.our_product_id)
   )
 
-  if (sameProductLink) {
-    return NextResponse.json({ error: 'Este competidor ya está vinculado a este producto' }, { status: 409 })
-  }
-
   const record = {
     id: resolvedId,
     our_sku: resolvedOwnSku ?? null,
@@ -333,6 +346,30 @@ export async function POST(req: NextRequest) {
     health: (mlData.health as number) ?? null,
     usd_price: usdPrice,
     synced_at: new Date().toISOString(),
+  }
+
+  if (sameProductLink) {
+    const updateData = {
+      title: record.title,
+      permalink: record.permalink,
+      thumbnail: record.thumbnail,
+      seller_name: record.seller_name,
+      synced_at: record.synced_at,
+    }
+
+    const { error } = await admin.schema('ml').from('ml_competitor_items').update(updateData).eq('id', resolvedId)
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    return NextResponse.json({
+      ok: true,
+      item: {
+        ...(existing ?? {}),
+        ...record,
+        ...updateData,
+      },
+    })
   }
 
   const { error } = await admin.schema('ml').from('ml_competitor_items').upsert(record)
