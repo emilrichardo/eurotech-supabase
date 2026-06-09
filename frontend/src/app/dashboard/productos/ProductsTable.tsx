@@ -1589,7 +1589,7 @@ export default function ProductsTable({
         type PriceEntry = {
           key: string
           label: string
-          price: number
+          price: number | null
           isOurs: boolean
           oursType?: 'pub' | 'cat' | 'sale'
           comp?: Competitor
@@ -1611,12 +1611,17 @@ export default function ProductsTable({
           })
         }
         for (const c of comps) {
-          if (c.price != null) allEntries.push({ key: c.id, label: c.title ?? c.id, price: c.price, isOurs: false, comp: c })
+          allEntries.push({ key: c.id, label: c.title ?? c.id, price: c.price, isOurs: false, comp: c })
         }
-        const sortedByPrice = [...allEntries].sort((a, b) => a.price - b.price)
+        const sortedByPrice = [...allEntries].sort((a, b) => {
+          const left = a.price ?? Number.POSITIVE_INFINITY
+          const right = b.price ?? Number.POSITIVE_INFINITY
+          return left - right
+        })
 
-        function diffVsRef(price: number) {
+        function diffVsRef(price: number | null) {
           if (refPrice == null || refPrice === 0) return null
+          if (price == null) return null
           return ((price - refPrice) / refPrice) * 100
         }
 
@@ -2075,7 +2080,7 @@ export default function ProductsTable({
                                     entry.isOurs && entry.oursType === 'cat' ? 'text-blue-700' :
                                     isPaused ? 'text-gray-400' : 'text-gray-900'
                                   }`}>
-                                    {formatPrice(entry.price, selected?.currency_id ?? null)}
+                                    {entry.price == null ? 'Sin precio' : formatPrice(entry.price, selected?.currency_id ?? null)}
                                   </p>
                                   {!entry.isOurs && entry.comp?.usd_price != null && (
                                     <p className="text-xs text-gray-400 mt-0.5">
@@ -2086,6 +2091,9 @@ export default function ProductsTable({
                                     <p className={`text-xs font-semibold mt-0.5 ${isCheaper ? 'text-red-500' : 'text-green-600'}`}>
                                       {isCheaper ? `${diff.toFixed(0)}%` : `+${diff.toFixed(0)}%`}
                                     </p>
+                                  )}
+                                  {!entry.isOurs && entry.price == null && (
+                                    <p className="text-xs text-amber-500 mt-0.5">Pendiente de sincronizar</p>
                                   )}
                                 </div>
                                 {!entry.isOurs && (
