@@ -54,6 +54,46 @@ function parseInput(input: string): {
   return { catalogId, itemId, fallbackItemId }
 }
 
+function titleFromInput(input: string): string | null {
+  try {
+    const url = new URL(input.trim())
+    const slug = url.pathname
+      .split('/')
+      .filter(Boolean)
+      .find((part) => part && !/^ML[A-Z]+\d+$/i.test(part) && part !== 'p' && part !== 'up')
+    if (!slug) return null
+    const title = slug
+      .replace(/[-_]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    return title.length > 0 ? title : null
+  } catch {
+    return null
+  }
+}
+
+function buildFallbackItemData(itemId: string, input: string): Record<string, unknown> {
+  const title = titleFromInput(input)
+  return {
+    id: itemId,
+    title,
+    price: null,
+    original_price: null,
+    currency_id: 'UYU',
+    available_quantity: null,
+    sold_quantity: null,
+    status: 'active',
+    condition: null,
+    listing_type_id: null,
+    category_id: null,
+    permalink: `https://www.mercadolibre.com.uy/${itemId}`,
+    thumbnail: null,
+    seller_id: null,
+    seller_name: null,
+    health: null,
+  }
+}
+
 async function fetchSellerName(sellerId: number, accessToken: string): Promise<string | null> {
   try {
     const res = await fetch(`${ML_API}/users/${sellerId}`, {
@@ -226,11 +266,8 @@ export async function POST(req: NextRequest) {
     // Some MercadoLibre product pages expose a wid= item in the hash. If the
     // catalog endpoint is blocked or unavailable, fall back to that concrete item.
     if (!mlData && fallbackItemId) {
-      const fallbackData = await fetchFromItem(fallbackItemId, tokenRow.access_token)
-      if (fallbackData) {
-        mlData = fallbackData
-        resolvedId = fallbackItemId
-      }
+      mlData = buildFallbackItemData(fallbackItemId, itemIdOrUrl)
+      resolvedId = fallbackItemId
     }
   } else if (itemId) {
     // Direct item: try /items endpoint (only works for our own items)
@@ -239,12 +276,7 @@ export async function POST(req: NextRequest) {
 
     // If blocked (competitor item), suggest using catalog URL
     if (!mlData) {
-      return NextResponse.json(
-        {
-          error: `No se pudo acceder a "${itemId}". Si es un producto de catálogo, pegá la URL del tipo mercadolibre.com.uy/p/MLU... en lugar de la URL del artículo.`,
-        },
-        { status: 403 }
-      )
+      mlData = buildFallbackItemData(itemId, itemIdOrUrl)
     }
   }
 
