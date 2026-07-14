@@ -7,7 +7,7 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ML_CLIENT_ID = Deno.env.get("ML_CLIENT_ID")!;
 const ML_CLIENT_SECRET = Deno.env.get("ML_CLIENT_SECRET")!;
-const SYNC_PAGE_SIZE = 300;
+const SYNC_PAGE_SIZE = 100;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
@@ -494,6 +494,8 @@ async function fetchAndUpsertItems(
 ): Promise<number> {
   let upserted = 0;
   const CONCURRENCY = 20;
+  const UPSERT_BATCH_SIZE = 5;
+  const UPSERT_RETRIES = 2;
 
   // Fetch the item payload in batches to reduce round-trips.
   // Promos are still resolved per item when the main payload doesn't include sale_price.
@@ -541,14 +543,29 @@ async function fetchAndUpsertItems(
 
     if (rows.length === 0) continue;
 
-    const { error } = await supabase
-      .schema("ml").from("ml_products")
-      .upsert(rows, { onConflict: "id" });
+    for (const upsertBatch of chunk(rows, UPSERT_BATCH_SIZE)) {
+      let lastError: string | null = null;
 
-    if (error) {
-      console.error(`Error upserting batch: ${error.message}`);
-    } else {
-      upserted += rows.length;
+      for (let attempt = 0; attempt <= UPSERT_RETRIES; attempt++) {
+        const { error } = await supabase
+          .schema("ml").from("ml_products")
+          .upsert(upsertBatch, { onConflict: "id" });
+
+        if (!error) {
+          upserted += upsertBatch.length;
+          lastError = null;
+          break;
+        }
+
+        lastError = error.message;
+        if (attempt < UPSERT_RETRIES) {
+          await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+        }
+      }
+
+      if (lastError) {
+        throw new Error(`Error upserting batch after retries: ${lastError}`);
+      }
     }
   }
 
