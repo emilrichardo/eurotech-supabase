@@ -7,6 +7,7 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ML_CLIENT_ID = Deno.env.get("ML_CLIENT_ID")!;
 const ML_CLIENT_SECRET = Deno.env.get("ML_CLIENT_SECRET")!;
+const SYNC_PAGE_SIZE = 300;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
@@ -569,15 +570,44 @@ Deno.serve(async (req) => {
   try {
     console.log("=== ML Sync iniciado ===");
 
+    let page = 0;
+    try {
+      const body = await req.json();
+      if (Number.isInteger(body?.page) && body.page >= 0) page = body.page;
+    } catch {
+      // Empty cron body: start from the first page.
+    }
+
     const tokenRow = await getValidToken();
     const ids = await fetchAllItemIds(tokenRow.access_token, tokenRow.user_id);
-    console.log(`Total productos: ${ids.length} (user_id: ${tokenRow.user_id})`);
-    const upserted = await fetchAndUpsertItems(ids, tokenRow.access_token);
+    const start = page * SYNC_PAGE_SIZE;
+    const pageIds = ids.slice(start, start + SYNC_PAGE_SIZE);
+    const totalPages = Math.ceil(ids.length / SYNC_PAGE_SIZE);
+    console.log(`Total productos: ${ids.length} (user_id: ${tokenRow.user_id}), página ${page + 1}/${totalPages}`);
+    const upserted = await fetchAndUpsertItems(pageIds, tokenRow.access_token);
+    const hasMore = start + pageIds.length < ids.length;
+
+    if (hasMore) {
+      const nextPage = page + 1;
+      console.log(`Disparando página siguiente: ${nextPage + 1}/${totalPages}`);
+      fetch(`${SUPABASE_URL}/functions/v1/ml-sync`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${SUPABASE_SERVICE_KEY}`,
+        },
+        body: JSON.stringify({ page: nextPage }),
+      }).catch((error) => console.error("Error disparando página siguiente:", error));
+    }
 
     const result = {
       success: true,
       total_ids: ids.length,
+      page,
+      total_pages: totalPages,
       upserted,
+      synced_at: new Date().toISOString(),
+      has_more: hasMore,
       synced_at: new Date().toISOString(),
     };
 
