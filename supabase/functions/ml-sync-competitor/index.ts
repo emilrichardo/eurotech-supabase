@@ -1,4 +1,4 @@
-import { createClient } from "jsr:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const ML_API = "https://api.mercadolibre.com";
 const ML_OAUTH = "https://api.mercadolibre.com/oauth/token";
