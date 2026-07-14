@@ -34,6 +34,7 @@ function isAuthorized(req: Request): boolean {
   const provided = [bearer, apiKey, syncSecret].filter((value): value is string => Boolean(value));
   const allowed = [
     Deno.env.get("SYNC_OWN_SECRET"),
+    Deno.env.get("ML_SYNC_TRIGGER_SECRET"),
     Deno.env.get("SUPABASE_SECRET_KEY"),
     Deno.env.get("SUPABASE_SECRET_KEYS"),
     SUPABASE_SERVICE_KEY,
