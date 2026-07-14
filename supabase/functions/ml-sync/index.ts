@@ -280,7 +280,7 @@ interface MLDescription {
 }
 
 interface MLBatchItemResult {
-  id: string;
+  id?: string;
   code: number;
   body: MLItem | null;
 }
@@ -505,7 +505,11 @@ async function fetchAndUpsertItems(
       continue;
     }
 
-    const resultsById = new Map(batchResults.map((entry) => [entry.id, entry]));
+    const resultsById = new Map<string, MLBatchItemResult>();
+    for (const entry of batchResults) {
+      const itemId = entry.body?.id ?? entry.id;
+      if (itemId) resultsById.set(itemId, entry);
+    }
     const promoCandidates = batch.filter((id) => {
       const body = resultsById.get(id)?.body;
       return body && body.sale_price?.amount == null;
