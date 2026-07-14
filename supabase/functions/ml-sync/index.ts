@@ -608,7 +608,6 @@ Deno.serve(async (req) => {
       upserted,
       synced_at: new Date().toISOString(),
       has_more: hasMore,
-      synced_at: new Date().toISOString(),
     };
 
     console.log("=== ML Sync finalizado ===", result);
