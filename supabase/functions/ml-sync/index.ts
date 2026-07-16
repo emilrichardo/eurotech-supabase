@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { extractPromoAmount, type MLPricesResponse } from "./promo.ts";
 
 const ML_API = "https://api.mercadolibre.com";
 const ML_OAUTH = "https://api.mercadolibre.com/oauth/token";
@@ -436,23 +437,6 @@ async function fetchItemsBatch(ids: string[], token: string): Promise<MLBatchIte
   return res.json() as Promise<MLBatchItemResult[]>;
 }
 
-// /items/{id}/prices exposes promotional / deal pricing that the items endpoint
-// omits for the seller's own items. We pick the lowest amount among entries
-// flagged as promotional (type contains "promotion" or regular_amount present).
-interface MLPriceEntry {
-  id?: string;
-  type?: string;
-  amount?: number | null;
-  regular_amount?: number | null;
-  currency_id?: string;
-  conditions?: unknown;
-  metadata?: unknown;
-}
-interface MLPricesResponse {
-  id?: string;
-  prices?: MLPriceEntry[];
-}
-
 async function fetchItemPrices(id: string, token: string): Promise<MLPricesResponse | null> {
   try {
     const res = await fetch(`${ML_API}/items/${id}/prices`, {
@@ -467,25 +451,6 @@ async function fetchItemPrices(id: string, token: string): Promise<MLPricesRespo
     console.warn(`[items/${id}/prices] fetch error:`, err instanceof Error ? err.message : err);
     return null;
   }
-}
-
-function extractPromoAmount(prices: MLPricesResponse | null): number | null {
-  const list = Array.isArray(prices?.prices) ? prices!.prices! : [];
-  if (list.length === 0) return null;
-
-  const promos = list.filter((p) => {
-    if (typeof p.amount !== "number") return false;
-    const isPromoType = typeof p.type === "string" && /promo|deal|campaign/i.test(p.type);
-    const isDiscounted =
-      typeof p.regular_amount === "number" && p.regular_amount > p.amount;
-    return isPromoType || isDiscounted;
-  });
-
-  if (promos.length === 0) return null;
-  return promos.reduce((min, p) => {
-    const v = p.amount as number;
-    return min === null || v < min ? v : min;
-  }, null as number | null);
 }
 
 async function fetchAndUpsertItems(
@@ -513,18 +478,25 @@ async function fetchAndUpsertItems(
       const itemId = entry.body?.id ?? entry.id;
       if (itemId) resultsById.set(itemId, entry);
     }
-    const promoCandidates = batch.filter((id) => {
-      const body = resultsById.get(id)?.body;
-      return body && body.sale_price?.amount == null;
-    });
+    // The /items endpoint can return a stale sale_price while /prices already
+    // exposes the active promotion. Refresh the prices endpoint for every
+    // item so an old promotion cannot survive in ml_products.
+    const promoCandidates = batch;
 
     const promoPrices = new Map<string, number | null>();
+    // Keep the promotion endpoint below Mercado Libre's burst limits. Its
+    // response is authoritative; the sale_price embedded in /items can lag.
     const promoBatchSize = 8;
     for (const promoBatch of chunk(promoCandidates, promoBatchSize)) {
       await Promise.all(promoBatch.map(async (id) => {
         const pricesResp = await fetchItemPrices(id, token);
-        const promoPrice = extractPromoAmount(pricesResp);
-        promoPrices.set(id, promoPrice);
+        // A successful response with no promotion deliberately stores null,
+        // clearing a stale sale_price. A missing response is kept absent from
+        // the map so this item can be retried instead of persisting /items'
+        // potentially stale sale_price.
+        if (pricesResp) {
+          promoPrices.set(id, extractPromoAmount(pricesResp));
+        }
       }))
     }
 
@@ -532,11 +504,15 @@ async function fetchAndUpsertItems(
       const item = resultsById.get(id)?.body ?? null;
       if (!item) return null;
 
-      const row = mapItemToRow(item, null);
-      const salePrice = item.sale_price?.amount ?? promoPrices.get(id) ?? null;
-      if (salePrice !== null) {
-        row.sale_price = salePrice;
+      if (!promoPrices.has(id)) {
+        console.warn(
+          `[items/${id}] skipping upsert because the authoritative /prices response is unavailable`,
+        );
+        return null;
       }
+
+      const row = mapItemToRow(item, null);
+      row.sale_price = promoPrices.get(id) ?? null;
       return row;
     });
     const rows = results.filter((r): r is ReturnType<typeof mapItemToRow> => r !== null);
@@ -588,15 +564,22 @@ Deno.serve(async (req) => {
     console.log("=== ML Sync iniciado ===");
 
     let page = 0;
+    let requestedIds: string[] | null = null;
     try {
       const body = await req.json();
       if (Number.isInteger(body?.page) && body.page >= 0) page = body.page;
+      if (Array.isArray(body?.ids)) {
+        const ids = body.ids.filter((id: unknown): id is string =>
+          typeof id === "string" && id.trim().length > 0,
+        );
+        requestedIds = Array.from(new Set(ids));
+      }
     } catch {
       // Empty cron body: start from the first page.
     }
 
     const tokenRow = await getValidToken();
-    const ids = await fetchAllItemIds(tokenRow.access_token, tokenRow.user_id);
+    const ids = requestedIds ?? await fetchAllItemIds(tokenRow.access_token, tokenRow.user_id);
     const start = page * SYNC_PAGE_SIZE;
     const pageIds = ids.slice(start, start + SYNC_PAGE_SIZE);
     const totalPages = Math.ceil(ids.length / SYNC_PAGE_SIZE);
