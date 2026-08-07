@@ -129,8 +129,12 @@ apply_pending_migrations() {
   while IFS= read -r file; do
     filename="$(basename "$file")"
     version="${filename%%_*}"
+    if [[ ! "$version" =~ ^[0-9]{14}$ ]]; then
+      echo "Nombre de migración inválido: $filename" >&2
+      exit 1
+    fi
     checksum="$(shasum -a 256 "$file" | awk '{print $1}')"
-    recorded="$(psql -At -v version="$version" -c "SELECT checksum FROM deployment.monitor_migrations WHERE version = :'version'")"
+    recorded="$(psql -Atc "SELECT checksum FROM deployment.monitor_migrations WHERE version = '$version'")"
 
     if [[ -n "$recorded" ]]; then
       if [[ "$recorded" != "$checksum" ]]; then
