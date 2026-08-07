@@ -1,0 +1,34 @@
+name: Deploy Monitor Supabase to self-hosted Coolify
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+      - 'supabase/migrations/**'
+      - 'scripts/deploy-self-hosted-monitor.sh'
+      - '.github/workflows/deploy-self-hosted-supabase.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: self-hosted-eurotech-monitor-supabase
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, linux, ARM64, coolify-oracle]
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Monitor
+        uses: actions/checkout@v4
+
+      - name: Apply Monitor migrations and synchronize Edge Functions
+        env:
+          COOLIFY_RUN_LOCAL: '1'
+        run: |
+          set -Eeuo pipefail
+          bash scripts/deploy-self-hosted-monitor.sh
